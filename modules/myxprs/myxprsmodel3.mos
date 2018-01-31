@@ -1,0 +1,60 @@
+(!******************************************************
+  file myxprsmodel3.mos
+  `````````````````````
+  Testing myxprs:
+  * Matrix output with names generation
+       
+  author: S.Heipcke, Oct. 2017
+
+  (c) Copyright 2018 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "Matrix output with names generation"
+  uses "myxprs"                   ! Load the solver module
+  uses "mmsystem"
+  options keepassert
+
+  public declarations
+    x,y: mpvar                    ! Some decision variables
+    Ctr1, Ctr2, MyObj: linctr
+    mattxt: text
+  end-declarations
+
+  Ctr1:= 3*x + 2*y <= 400  
+  Ctr2:= x + 3*y <= 310
+  MyObj:= 5*x + 20*y
+  x is_integer; y is_integer
+
+!  setparam("myxp_verbose", true)  ! Display solver log
+  maximize(MyObj)                 ! Load and solve the problem
+
+ ! Matrix output using default names
+  writeprob("test1.lp", "l")
+  fcopy("test1.lp","text:mattxt")
+  writeln("Matrix 1 (default names):\n", mattxt)
+  assert(findtext(mattxt,"C2",1)>0, "C2 not found")
+  assert(findtext(mattxt,"R1",1)>0, "R1 not found")
+
+ ! Matrix output with names generation
+  setparam("myxp_loadnames", true)
+  maximize(5*x + 20*y)
+  writeprob("test2.lp", "l")
+  fcopy("test2.lp","text:mattxt")
+  writeln("Matrix 2 (model entity names):\n", mattxt)
+  assert(findtext(mattxt,"x",1)>0, "x not found")
+  assert(findtext(mattxt,"Ctr2",1)>0, "Ctr2 not found")
+
+end-model
+

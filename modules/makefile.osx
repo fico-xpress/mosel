@@ -1,0 +1,32 @@
+##########################################################################
+# File makefile.osx
+# `````````````````
+# makefile for compiling Mosel models and creating DSO on Mac
+# - Specify any additional library dependencies via the EXTRALIB parameter
+# 
+# (c) Copyright 2018 Fair Isaac Corporation
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+# 
+#       http://www.apache.org/licenses/LICENSE-2.0
+# 
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+# 
+##########################################################################
+.SUFFIXES: .bim .mos .dso
+
+EXTRALIB=
+CFLAGS=-I${XPRESSDIR}/include -L${XPRESSDIR}/lib
+
+.c.dso:
+	$(CC) $(CFLAGS) -dynamiclib $< -o $*.dso $(EXTRALIB)
+
+.mos.bim:
+	mosel compile '$*'
+

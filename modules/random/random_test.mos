@@ -1,0 +1,100 @@
+(!******************************************************
+  File random_test.mos
+  ````````````````````
+  Testing the functionality defined by module 'random'. 
+
+  author: S. Heipcke, Jan 2018
+
+  (c) Copyright 2018 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "testing random"
+  options keepassert
+  uses "random"
+       
+  writeln("Testing random.dso")
+
+  declarations
+    y: real
+    k: integer
+    A: array(range) of integer
+  end-declarations
+
+  setmtrandseed(17)        ! n>0
+  k:=mtrand_int
+  writeln(k)
+  assert(k>=0, "Unexpected random value i1:"+k)
+  A::(1..4)[97,119,89,41]  ! array size 1-15
+  setmtrandseed(A)
+  k:=equilikely(2,10)
+  writeln(k)
+  assert(k>=2 and k<=10, "Unexpected random value i2:"+k)
+  k:=mtrand_intp
+  writeln(k)
+  assert(k>=0, "Unexpected random value i3:"+k)
+
+  y:=mtrand_real1
+  writeln(y)
+  assert(y>=0 and y<=1, "Unexpected random value r1:"+y)
+  y:=mtrand_real2
+  writeln(y)
+  assert(y>=0 and y<1, "Unexpected random value r2:"+y)
+  y:=mtrand_real3
+  writeln(y)
+  assert(y>0 and y<1, "Unexpected random value r3:"+y)
+  y:=mtrand_real
+  writeln(y)
+  assert(y>=0 and y<1, "Unexpected random value r4:"+y)
+  y:=uniform(0.2,1.7)
+  writeln(y)
+  assert(y>=0.2 and y<=1.7, "Unexpected random value r5:"+y)
+
+  k:=bernoulli(0.75)     ! 0.0<r<1.0
+  writeln(k)
+  assert(k=0 or k=1, "Unexpected random value i4:"+k)
+  k:=binomial(10, 0.5)   ! (n,r) with n>0 and 0.0<r<1.0
+  writeln(k)
+  assert(k>=0 and k<=10, "Unexpected random value i5:"+k)
+  k:=geometric(0.3)      ! 0.0<r<1.0
+  writeln(k)
+  assert(k>=0, "Unexpected random value i6:"+k)
+  k:=pascal(12, 0.4)     ! (n,r) with n>0 and 0.0<r<1.0
+  writeln(k)
+  assert(k>=0, "Unexpected random value i7:"+k)
+  k:=poisson(3.5)        ! r>0.0
+  writeln(k)
+  assert(k>=0, "Unexpected random value i8:"+k)
+
+  y:=chisquare(5)        ! n>0
+  writeln(y)
+  assert(y>=0, "Unexpected random value r6:"+y)
+  y:=erlang(5, 2.3)     ! (n,r) with n>0 and r>0.0
+  writeln(y)
+  assert(y>=0, "Unexpected random value r7:"+y)
+  y:=exponential(2.5)   ! r>0.0
+  writeln(y)
+  assert(y>=0, "Unexpected random value r8:"+y) 
+  y:=lognormal(2.3, 1.5)  ! (r1,r2) with r2>0.0
+  writeln(y)
+  assert(y>=0, "Unexpected random value r9:"+y)
+  y:=normal(-3.7, 5.5)    ! (r1,r2) with r2>0.0
+  writeln(y)
+  assert(not isnan(y), "Unexpected random value r10:"+y)
+  y:=student(3)           ! n>0
+  writeln(y)
+  assert(not isnan(y), "Unexpected random value r11:"+y)
+
+  writeln("Done.")
+end-model  

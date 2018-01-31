@@ -1,0 +1,74 @@
+(!******************************************************
+  file myxprsmodel1p.mos
+  ``````````````````````
+  Testing myxprs:
+  * Problem solving and solution retrieval for multiple problems
+    
+  author: S.Heipcke, Oct. 2017
+
+  (c) Copyright 2018 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "Problem solving and solution retrieval for multiple problems"
+  uses "myxprs"                       ! Load the solver module
+  options keepassert
+
+  declarations
+    x,y: mpvar                        ! Some decision variables
+    p1, p2: mpproblem
+  end-declarations
+
+  procedure printsol(pname: string)
+    writeln("Problem ", pname)
+    if getprobstat = MYXP_OPT then
+      writeln("Solution: ", getobjval, ";", x.sol, ";", y.sol)    
+    else
+      writeln("No solution found")
+    end-if
+  end-procedure
+
+  with p1 do
+    Ctr1:= 3*x + 2*y <= 400  
+    Ctr2:= x + 3*y <= 310   
+   
+    setparam("myxp_verbose", true)    ! Solver parameter: display solver log 
+    maximize(5*x + 20*y)              ! Solve the problem
+ 
+  ! Retrieve a solver parameter
+    writeln("Solver status: ", getparam("myxp_lpstatus"))
+    assert(getparam("myxp_lpstatus")=MYXP_LP_OPTIMAL, "Wrong LP status")
+    assert(round(getobjval)=2067)
+  end-do
+
+  p2:=p1                              ! Copy the problem definition  
+  with p2 do
+    x is_integer; y is_integer        ! Turn poblem into a MIP
+    maximize(5*x + 20*y)              ! Solve the modified problem
+    assert(round(getobjval)=2065)
+  end-do
+ 
+  with p1 do
+    assert(getprobstat=MYXP_OPT, "P1 not optimal")
+    printsol("P1")
+    assert(round(getobjval)=2067)
+  end-do
+  with p2 do
+    assert(getprobstat=MYXP_OPT, "P2 not optimal")
+    printsol("P2")
+    assert(round(getobjval)=2065)
+  end-do
+
+end-model
+
