@@ -28,7 +28,7 @@ Depending on your platform, use the corresponding [makefiles](../README.md):
 
 **[OSX](../makefile.osx):**
 
-`make -f makefile.osx random.dso`  
+`make -f ../makefile.osx random.dso`  
 
 ## Testing
 
