@@ -17,17 +17,17 @@ A compiled version of this module is provided with the standard Xpress Mosel dis
 
 Depending on your platform, use the corresponding [makefiles](../README.md):
 
-**[Windows](makefile.win):**
+**[Windows](../makefile.win):**
 
-`nmake -f makefile.win math.dso`
+`nmake -f ..\makefile.win math.dso`
 
-**[Linux](makefile.linux):**
+**[Linux](../makefile.linux):**
 
-`make -f makefile.linux math.dso`
+`make -f ../makefile.linux math.dso`
 
 **[OSX](../makefile.osx):**
 
-`make -f makefile.osx math.dso` 
+`make -f ../makefile.osx math.dso` 
 
 ## Testing
 

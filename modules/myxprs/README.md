@@ -47,17 +47,17 @@ Building this module requires additional dependencies, please use one of these c
 
 Or configure the provided [makefiles](../README.md) as follows:
 
-**[Windows](makefile.win):**
+**[Windows](../makefile.win):**
 
-`nmake -f makefile.win myxprs.dso EXTRALIB="%XPRESSDIR%\lib\xprs.lib %XPRESSDIR%\lib\xprnls.lib"`
+`nmake -f ..\makefile.win myxprs.dso EXTRALIB="%XPRESSDIR%\lib\xprs.lib %XPRESSDIR%\lib\xprnls.lib"`
 
-**[Linux](makefile.linux):**
+**[Linux](../makefile.linux):**
 
-`make -f makefile.linux myxprs.dso EXTRALIB="-lxprs -lxprnls"`
+`make -f ../makefile.linux myxprs.dso EXTRALIB="-lxprs -lxprnls"`
 
 **[OSX](../makefile.osx):**
 
-`make -f makefile.osx myxprs.dso EXTRALIB="-lxprs -lxprnls"`
+`make -f ../makefile.osx myxprs.dso EXTRALIB="-lxprs -lxprnls"`
 
 ## Testing
 
