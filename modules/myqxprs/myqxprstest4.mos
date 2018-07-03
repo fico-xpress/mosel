@@ -1,0 +1,80 @@
+(!******************************************************
+  file myqxprstest4.mos
+  `````````````````````
+  Testing myqxprs:
+  * defining an integer solution callback
+    
+  author: S.Heipcke, Apr. 2018
+
+  (c) Copyright 2018 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!) 
+model "Integer solution callback"
+  uses "myqxprs"                   ! Load the solver module
+  uses "mmsystem"
+  options keepassert
+
+  public declarations
+    RN = 1..5                      ! Set of points
+    CX,CY: array(RN) of real       ! Target location for each point
+    x,y: array(RN) of mpvar        ! Decision variables
+    foutput: text 
+  end-declarations
+
+  CX::[-5,5,5,-5,0]; CY::[5,5,-5,-5,0]
+
+  fopen("tee:text:foutput&", F_OUTPUT)
+
+ ! **** Definition of the callback subroutine ****
+  public procedure intsol
+    writeln("!!! New solution: ", getparam("myxp_lpobjval"))
+    forall(i in RN) writeln(i, ": ", getsol(x(i)), ", ", getsol(y(i)))
+  end-procedure
+
+ ! **** Problem statement ****
+ ! Set bounds on variables
+  forall(i in RN) do
+    -10<=x(i); x(i)<=10
+    -10<=y(i); y(i)<=10
+    x(i) is_integer; y(i) is_integer
+  end-do
+
+ ! Objective: minimise the total squared distance between all points
+  TotDist:= sum(i,j in RN | i<j) ((x(i)-x(j))^2+(y(i)-y(j))^2)
+
+ ! Constraints: all points within given distance of their target location
+  forall(i in RN) 
+    LimDist(i):= (x(i)-CX(i))^2+(y(i)-CY(i))^2 <= 1
+
+ ! Configuration of the solver
+  setparam("myxp_verbose", true) 
+
+ ! Define a solver callback (invoked whenever an integer solution is found)
+  setcbintsol("intsol")
+
+ ! Solve the problem
+  minimise(TotDist)
+
+  if getprobstat = MYXP_OPT then
+    writeln("Solution: ", getobjval)    
+    assert(round(getobjval)=816, "Wrong solution")
+  else
+    writeln("No solution found")
+  end-if
+
+  fclose(F_OUTPUT)
+  assert(findtext(foutput,"!!! New solution",1)>0, "Callback not invoked")
+
+end-model

@@ -15,6 +15,7 @@ Each subdirectory contains the source of one library, along with building instru
 Component | Type | Description | Notes
 ----------|------|-------------|----------------------
 [myxprs](modules/myxprs/README.md) | DSO | Example of using the Mosel NI matrix handling interface for connecting an LP/MIP solver (Xpress Optimizer) | Requires Xpress Optimizer libraries
+[myqxprs](modules/myqxprs/README.md) | DSO | Example of using the library interface of the module *mmnl* that extends the Mosel NI matrix interface with handling of nonlinearities for connecting an NLP solver (quadratic solver of Xpress Optimizer) | Requires Xpress Optimizer libraries
 [math](modules/math/README.md) | DSO | Additional Maths functions for the Mosel language | Compiled version is included in the Mosel distribution
 [random](modules/random/README.md) | DSO | Alternative random number generators | Compiled version is included in the Mosel distribution
 
