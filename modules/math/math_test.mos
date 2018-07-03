@@ -3,7 +3,7 @@
   ``````````````````
   Testing the functionality defined by module 'math'. 
    
-  author: Y. Colombani, S. Heipcke, June 2016, rev. Jan 2018
+  author: Y. Colombani, S. Heipcke, June 2016, rev. Apr 2018
 
   (c) Copyright 2018 Fair Isaac Corporation
 
@@ -125,6 +125,15 @@ model "testing math"
   assert(y=180, "Incorrect result for todeg (180): "+y)
   y:=torad(90)
   assert(y=M_PI_2, "Incorrect result for torad (1.57...): "+y)
+
+  y:=round2d(-2.755)
+  assert(y=-2.76, "Incorrect result for round2d (-2.76): "+y)
+  y:=round2d(2.755)
+  assert(y=2.76, "Incorrect result for round2d (2.76): "+y)
+  y:=roundnd(-2.987654321,4)
+  assert(y=-2.9877, "Incorrect result for roundnd (-2.9877): "+y)
+  y:=roundnd(2.987654321,3)
+  assert(y=2.988, "Incorrect result for roundnd (2.988): "+y)
 
   writeln("All okay.")
 end-model

@@ -1,24 +1,14 @@
 /******************************************
+  Mosel NI Examples
+  =================
+    
   File math.c
   ```````````
-  Example module defining a set of mathematical functions
+  Example module defining a set of
+  mathematical functions
 
-  author: Y. Colombani, 2005, rev. Jun 2016
-
-  (c) Copyright 2018 Fair Isaac Corporation
-  
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
- 
-       http://www.apache.org/licenses/LICENSE-2.0
- 
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-
+  (c) 2008 Fair Isaac Corporation
+      author: Y. Colombani, rev. Apr. 2018
 *******************************************/
 /*
 cl /nologo /MD /I%XPRESSDIR%\include /LD math.c /Femath.dso
@@ -59,6 +49,8 @@ static int ma_sign(XPRMcontext ctx,void *libctx);
 static int ma_sign_i(XPRMcontext ctx,void *libctx);
 static int ma_todeg(XPRMcontext ctx,void *libctx);
 static int ma_torad(XPRMcontext ctx,void *libctx);
+static int ma_round2d(XPRMcontext ctx,void *libctx);
+static int ma_roundnd(XPRMcontext ctx,void *libctx);
 static int ma_j0(XPRMcontext ctx,void *libctx);
 static int ma_j1(XPRMcontext ctx,void *libctx);
 static int ma_jn(XPRMcontext ctx,void *libctx);
@@ -125,6 +117,9 @@ static XPRMdsofct tabfct[]=
          {"todeg",1028,XPRM_TYP_REAL,1,"r",ma_todeg},
          {"torad",1029,XPRM_TYP_REAL,1,"r",ma_torad},
 
+         {"round2d",1040,XPRM_TYP_REAL,1,"r",ma_round2d},
+         {"roundnd",1041,XPRM_TYP_REAL,2,"ri",ma_roundnd},
+
          {"j0",1120,XPRM_TYP_REAL,1,"r",ma_j0},
          {"j1",1121,XPRM_TYP_REAL,1,"r",ma_j1},
          {"jn",1122,XPRM_TYP_REAL,2,"ir",ma_jn},
@@ -133,13 +128,20 @@ static XPRMdsofct tabfct[]=
          {"yn",1125,XPRM_TYP_REAL,2,"ir",ma_yn}
 	};
 
+static int chkres(int);
+                                     /* Table of services */
+static XPRMdsoserv tabserv[]=
+        {
+         {XPRM_SRV_CHKRES,(void*)chkres}
+        };
+
 /* Interface structure */
 static XPRMdsointer dsointer= 
         { 
          sizeof(tabconst)/sizeof(XPRMdsoconst),tabconst,
          sizeof(tabfct)/sizeof(XPRMdsofct),tabfct,
          0,NULL,
-         0,NULL
+         sizeof(tabserv)/sizeof(XPRMdsoserv),tabserv
         };
 
 static XPRMnifct mm;             /* For storing Mosel NI function table */
@@ -151,9 +153,17 @@ DSO_INIT math_init(XPRMnifct nifct, int *interver,int *libver, XPRMdsointer **in
 {
  mm=nifct;                      /* Save the table of Mosel NI functions */
  *interver=XPRM_NIVERS;         /* The Mosel NI version we are using */
- *libver=XPRM_MKVER(0,0,2);     /* The version of the module: 0.0.2 */
+ *libver=XPRM_MKVER(0,0,3);     /* The version of the module */
  *interf=&dsointer;             /* Our interface */
 
+ return 0;
+}
+
+/****************************************************************/
+/* Check restrictions (this module implements all restrictions) */
+/****************************************************************/
+static int chkres(int r)
+{
  return 0;
 }
 
@@ -375,9 +385,9 @@ static int ma_nextup(XPRMcontext ctx,void *libctx)
  return XPRM_RT_OK;
 }
 
-/************************************************************/
-/* Round to nearest integerNext larger floating-point value */
-/************************************************************/
+/****************************/
+/* Round to nearest integer */
+/****************************/
 static int ma_rint(XPRMcontext ctx,void *libctx)
 {
  XPRM_TOP_ST(ctx)->real=rint(XPRM_TOP_ST(ctx)->real);
@@ -435,6 +445,28 @@ static int ma_todeg(XPRMcontext ctx,void *libctx)
 static int ma_torad(XPRMcontext ctx,void *libctx)
 {
  XPRM_TOP_ST(ctx)->real=XPRM_TOP_ST(ctx)->real*ma_pi_2/90;
+ return XPRM_RT_OK;
+}
+
+/*********************************************/
+/* Round to 2 digits after the decimal point */
+/*********************************************/
+static int ma_round2d(XPRMcontext ctx,void *libctx)
+{
+ XPRM_TOP_ST(ctx)->real=rint(100*(XPRM_TOP_ST(ctx)->real))/100;
+ return XPRM_RT_OK;
+}
+
+/*********************************************/
+/* Round to n digits after the decimal point */
+/*********************************************/
+static int ma_roundnd(XPRMcontext ctx,void *libctx)
+{
+ double x,y;
+
+ x=XPRM_POP_REAL(ctx);
+ y=pow(10,XPRM_TOP_ST(ctx)->integer);
+ XPRM_TOP_ST(ctx)->real=rint(y*x)/y;
  return XPRM_RT_OK;
 }
 
