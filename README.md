@@ -10,11 +10,7 @@ This repository contains various extension libraries for the Mosel language, eit
 
 Each subdirectory contains the source of one library, along with building instructions and some test(s).
 
-Furthermore, the *moseltest* program provides a general testing framework for source Mosel files, C programs or Java programs.
-
 ## Contents
-
-### Modules and packages
 
 Component | Type | Description | Notes
 ----------|------|-------------|----------------------
@@ -22,11 +18,6 @@ Component | Type | Description | Notes
 [myqxprs](modules/myqxprs/README.md) | DSO | Example of using the library interface of the module *mmnl* that extends the Mosel NI matrix interface with handling of nonlinearities for connecting an NLP solver (quadratic solver of Xpress Optimizer) | Requires Xpress Optimizer libraries
 [math](modules/math/README.md) | DSO | Additional Maths functions for the Mosel language | Compiled version is included in the Mosel distribution
 [random](modules/random/README.md) | DSO | Alternative random number generators | Compiled version is included in the Mosel distribution
-
-### Mosel testing system
-
-[moseltesting](moseltesting/README.md) General framework for testing
-Mosel using source Mosel files, C programs or Java programs
 
 ## Documentation
 * Mosel documentation: 
