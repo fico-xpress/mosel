@@ -1,0 +1,1107 @@
+(!******************************************************
+  File moseltest.mos
+  ``````````````````
+  General Mosel testing framework
+
+  author: Y. Colombani July 2015
+
+  (c) Copyright 2018 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model moseltest
+version 0.1.0
+uses 'mmsystem','mmjobs'
+
+parameters
+ SRCDIR="alltests"  ! Location of the tests or test file
+ WKDIR="workdir"    ! Temporary directory for cwd
+ DSODIR="dso"       ! Temporary dso directory
+ CONFLINE="!*!"     ! Tag for configuration lines
+ ERR="err.txt"      ! Error log file (inside of workdir)
+ OUT="out.txt"      ! Output file (inside of workdir)
+ BASEREP="report"   ! Report file (after execution, in current directory)
+ REPDATED=false     ! Generate unique report file using date
+ REPRESET=true      ! Clear report file (false=>append to existing)
+ KEEPDIR=false      ! Keep workdir/dsodir at the end of run
+ PIDFILE=""         ! PID file for the xprmsrv server (''=>no xprmsrv)
+ REPFILE=""         ! Report file (replaces BASEREP when defined)
+ MAXWAIT=60*10      ! Maximum time to wait for an execution
+ VALGRIND=false     ! Run tests with valgrind
+ KEEPENV=false      ! Keep Mosel related environment variables
+ LINELEN=80         ! Length of a line in the report
+end-parameters
+
+declarations
+ OPTTYPES:array(OPTNAMES:set of string) of string
+ Allfiles:list of text
+ MOPT:dynamic array(set of string) of text
+ minst:Mosel
+ mdr:Model
+ nbfail:integer
+ nbskipped:integer
+ srcdir:text
+ excludepat=["*.c9"+getdirsep+"*"]
+
+ sysname:string
+ syshost:string
+ sysarch:integer
+ usenmake:boolean
+ repfile:string
+ env_dsodir:text
+ env_clspath:text
+ env_dsopath:text
+ env_bimpfx:text
+ tplen=LINELEN-22
+
+ public tfile:text
+! System names:
+ KNOWNSYSNAMES={"aix","darwin","linux","hp-ux","sunos","windows"}
+! A system name may include architecture like aix64/aix32
+end-declarations
+
+! Prototypes
+forward function processtest(f:text,ft:integer,opts:array(string) of text):boolean
+forward procedure startinstance
+forward procedure endinstance(discon:boolean)
+forward function execmos(torun:text,parms:text):integer
+forward function dobuild(tobuild:text):boolean
+forward function gettotest(path:text):list of text
+forward procedure cleardir(p:text,rmd:boolean)
+forward procedure copydir(src:text,dst:string)
+forward function findmain(path:text,totest:text):integer
+forward procedure getopts(f:text,opts:array(set of string) of text)
+forward procedure defsetenv
+forward procedure updenv(env:text,spe:set of string)
+forward function expenv(ev:text):text
+forward function toskip(opts:array(set of string) of text):boolean
+forward function splicfgline(line:text,val:text):string
+forward function filexists(f:text):boolean
+forward function findpattern(rpat:text,f:text):boolean
+forward function splitlist(t:text,sc:integer):list of text
+forward function splitlist(t:text):list of text
+forward function splitset(t:text):set of string
+forward procedure reportfailure(f:text)
+forward procedure setsysdep
+forward function safeload(m:Model,bf:string):boolean
+forward function safecompile(opts:string,src:string,dst:string):integer
+forward procedure startxsrv
+forward procedure stopxsrv
+forward function domake(f:text):boolean
+forward function dorun(f:text):boolean
+
+! Known options (types: txt,int,boo,dbl,lst,lns):
+! option lst: same as 'txt' but can appear several times (concatenated)
+! option lns: same as 'txt' but can appear several times (multi lines)
+ OPTTYPES("runbefore"):="txt"	! model to run before main - exit 2 to skip test
+ OPTTYPES("runafter"):="txt"	! model to run after main test
+ OPTTYPES("outexpect"):="lns"	! regex to be found in output stream (in order)
+ OPTTYPES("errexpect"):="lns"	! regex to be found in error stream (in order)
+ OPTTYPES("compstat"):="int"	! expected compilation status (default=0)
+ OPTTYPES("componly"):="boo"	! if true: compile only, no execution
+ OPTTYPES("runstat"):="int"	! expected run status (default=0)
+ OPTTYPES("restart"):="boo"	! if true: restart instance after this test
+ OPTTYPES("newinst"):="boo"	! if true: start a new instance for this test
+ OPTTYPES("build"):="lst"	! list of packages/modules to build
+ OPTTYPES("package"):="txt"	! =package name => not run, will be saved
+ OPTTYPES("module"):="txt"	! =module name => not run, will be saved
+ OPTTYPES("skip"):="boo"	! if true: skip this test
+ OPTTYPES("skip_host"):="lst"	! list of host names where test is skipped
+ OPTTYPES("skip_sys"):="lst"	! list of system names where test is skipped
+ OPTTYPES("only_host"):="lst"	! list of host names where test is run
+ OPTTYPES("only_sys"):="lst"	! list of system names where test is run
+ OPTTYPES("setenv"):="lns"	! environment variable [sys.]<env>=<value>
+ finalise(OPTNAMES)
+
+! System specific settings
+ setsysdep
+
+! Here we go
+ srcdir:=SRCDIR
+ Allfiles:=gettotest(srcdir)
+ if Allfiles.size<1 then
+  writeln("Nothing to test!")
+  exit(1)
+ end-if
+
+ makedir(WKDIR)
+ cleardir(WKDIR,false)
+ makedir(DSODIR)
+ cleardir(DSODIR,false)
+
+ env_dsodir:=expandpath(DSODIR)
+ env_dsopath:=expandpath(WKDIR)+getpathsep+"."+getpathsep+expandpath(DSODIR)
+ env_clspath:=expandpath(getenv("XPRESSDIR")+"/lib/xprm.jar")+getpathsep+
+    expandpath(getenv("XPRESSDIR")+"/lib/xprd.jar")+getpathsep+
+    expandpath(getenv("XPRESSDIR")+"/lib/bindrv.jar")+getpathsep+'.'
+ if KEEPENV then
+  env_bimpfx:=getenv("MOSEL_BIM")
+  if getenv("MOSEL_DSO")<>"" then
+   env_dsopath+=getpathsep+getenv("MOSEL_DSO")
+  end-if
+ else
+  env_bimpfx:=""
+ end-if
+ defsetenv
+
+ writeln("Moseltest v", getparam("model_version"))
+ writeln("Running Mosel v", getparam("parser_version"), " on `", syshost,
+         "' (", sysname, " ", sysarch, "bit)")
+ writeln("Tests from ", SRCDIR)
+ startxsrv
+ writeln("-- Starting testing procedure --")
+ sttime:=gettime
+ forall(f in Allfiles) do
+  cleardir(WKDIR,false)
+  write(" + ", f, ": ");
+  if f.size+3+2<tplen then
+   write(" "*(tplen-3-2-f.size))
+  end-if
+  fflush
+  if endswith(f,".mos") then
+   fcopy(srcdir+'/'+f,WKDIR)
+   totest:=pathsplit(SYS_FNAME,f)
+   ftype:=0
+  elif endswith(f,".c") then
+   fcopy(srcdir+'/'+f,WKDIR)
+   totest:=pathsplit(SYS_FNAME,f)
+   ftype:=1
+  elif endswith(f,".java") then
+   fcopy(srcdir+'/'+f,WKDIR)
+   totest:=pathsplit(SYS_FNAME,f)
+   ftype:=2
+  elif endswith(f,".tar") then
+   untar(srcdir+'/'+f,WKDIR)
+   ftype:=findmain(WKDIR,totest)
+  elif endswith(f,".tgz") or endswith(f,".tar.gz")then
+   untar("zlib.gzip:"+srcdir+'/'+f,WKDIR)
+   ftype:=findmain(WKDIR,totest)
+  elif endswith(f,".zip") then
+   unzip(srcdir+'/'+f,WKDIR)
+   ftype:=findmain(WKDIR,totest)
+  elif endswith(f,".dir") then
+   copydir(srcdir+'/'+f,WKDIR)
+   ftype:=findmain(WKDIR,totest)
+  else
+   writeln("Unexpected file extention for file ", f, "!!!")
+   nbfail+=1
+   next
+  end-if
+
+  if totest.size<1 then
+   writeln("Main file was not found in ", f, "!!!")
+   nbfail+=1
+   next
+  end-if
+
+  getopts(totest,MOPT)
+
+  if toskip(MOPT) then
+   writeln("Skipped")
+   nbskipped+=1
+  elif processtest(totest,ftype,MOPT) then
+   nbfail+=1
+   reportfailure(f)
+  end-if
+ end-do
+
+ writeln("-- End of testing procedure --")
+ writeln("Total time: ", gettime-sttime, "s")
+
+ disconnect(minst)
+ stopxsrv
+ if KEEPDIR and Allfiles.size=1 then
+  writeln("Warning: directories '", WKDIR, "' and '", DSODIR, "' are not deleted")
+ else
+  cleardir(WKDIR,true)
+  cleardir(DSODIR,true)
+ end-if
+
+ if nbskipped=Allfiles.size then
+  writeln("No test run over ",Allfiles.size)
+ elif Allfiles.size-nbskipped>1 then
+  writeln(Allfiles.size-nbskipped, " tests were run over a total of ", Allfiles.size)
+ else
+  writeln(Allfiles.size-nbskipped, " test was run over a total of ", Allfiles.size)
+ end-if
+ if nbfail=1 then
+  writeln("1 test failed. See '", repfile, "' for further details.")
+  exit(1)
+ elif nbfail>1 then
+  writeln(nbfail," tests failed. See '", repfile, "' for further details.")
+  exit(1)
+ end-if
+
+!+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!******************
+!* Process a test
+!******************
+function processtest(f:text, ft:integer, opts:array(string) of text):boolean
+ declarations
+  specenv:set of string
+ end-declarations
+
+ updenv(opts("setenv"),specenv)
+ if opts("newinst")="true" and specenv.size<1 then
+  endinstance(true)
+ end-if
+ startinstance
+
+ rbf:=execmos(opts("runbefore"),"")
+ if rbf=2 then
+  writeln("Skipped (runbefore)")
+  nbskipped+=1
+ elif rbf<>0 then
+  writeln("Failed to run the 'runbefore' model!!!")
+  returned:=true
+ elif dobuild(opts("build")) then
+   writeln("Failed to process the build list!!!")
+   returned:=true
+ else
+  tstart:=gettime
+  if ft=0 then					! Mosel file
+   bimfile:=string(copytext(f,1,f.size-4)+".bim")
+   c:=safecompile("g",string(f),bimfile)
+   expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
+   if c<>expstat then
+    writeln("Compilation failed!!!")
+    returned:=true
+   elif c=0 then
+    if opts("componly")<>"true" and opts("package")="" then
+     if(safeload(mdr,bimfile)) then
+      writeln("Failed to load bimfile!!!")
+      returned:=true
+     else
+      run(mdr)
+      waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
+      if waitexpired then
+       write("(killed) ")
+       stop(mdr)
+       waitfor(EVENT_END,-1,WAIT_EXACT)
+      end-if
+      dropnextevent
+      expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
+      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>0 then
+       writeln("Execution error!!!")
+       returned:=true
+      end-if
+      unload(mdr)
+     end-if
+    elif opts("package")<>"" then
+     if not endswith(opts("package"),".bim") then opts("package")+=".bim"; end-if
+     fcopy(WKDIR+"/"+bimfile,DSODIR+"/"+opts("package"))
+    end-if
+   end-if
+  elif ft=1 then				! C file
+   if opts("module")<>"" then
+    execfile:=string(copytext(f,1,f.size-2)+".dso")
+    if domake(execfile) then
+     writeln("Compilation failed!!!")
+     returned:=true
+    else
+     fcopy(WKDIR+"/"+execfile,DSODIR+"/"+opts("module"))
+    end-if
+   else
+    execfile:=string(copytext(f,1,f.size-2)+if(sysname="windows",".exe",""))
+    if domake(execfile) then
+     writeln("Compilation failed!!!")
+     returned:=true
+    elif dorun(execfile) then
+     writeln("Execution error!!!")
+     returned:=true
+    end-if
+   end-if
+  elif ft=2 then				! Java file
+   execfile:=string(copytext(f,1,f.size-5)+".class")
+   if domake(execfile) then
+    writeln("Compilation failed!!!")
+    returned:=true
+   elif dorun(execfile) then
+    writeln("Execution error!!!")
+    returned:=true
+   end-if
+  else
+   writeln("Unknown file format!")
+   returned:=true
+  end-if
+
+  if minst.status<>0 then
+   writeln("Mosel crashed!!!")
+   returned:=true
+  end-if
+
+  if not returned and execmos(opts("runafter"),"")<>0 then
+   writeln("Failed to run the 'runafter' model!!!")
+   returned:=true
+  end-if
+
+  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT) then
+   writeln("Failed to validate 'outexpect'!!!")
+   returned:=true
+  end-if
+  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR) then
+   writeln("Failed to validate 'errexpect'!!!")
+   returned:=true
+  end-if
+
+  if not returned then
+   writeln("Done in ",gettime-tstart,"s")
+  end-if
+ end-if
+
+ if specenv.size>0 then
+  forall(s in specenv)
+   setenv(s,"")
+  defsetenv             ! Restore defaults
+  endinstance(true)
+ else
+  endinstance(opts("restart")="true")
+ end-if
+end-function
+
+!+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!****************************************
+!* Prepare the Mosel instance for a run
+!****************************************
+procedure startinstance
+ if minst.status<>0 then
+  valgrind:=if(VALGRIND,'valgrind ','')
+  if connect(minst, 'rcmd:'+valgrind+'mosel -r -d "'+expandpath(WKDIR)+ 
+                                    '" -dp "'+env_dsopath+'"')<>0  then
+   writeln("Fatal error: failed to start Mosel instance")
+   exit(2)
+  end-if
+ end-if
+ setcontrol(minst,"lang","en")
+ outpath:=string(expandpath(text(WKDIR)+"/"+OUT))
+ errpath:=string(expandpath(text(WKDIR)+"/"+ERR))
+ setdefstream(minst,F_INPUT,"null:")
+ setdefstream(minst,F_OUTPUT+F_LINBUF,outpath)
+ setdefstream(minst,F_ERROR+F_LINBUF,errpath)
+ fcopy("tmp:makefile",WKDIR+"/makefile")
+end-procedure
+
+!**************************************
+!* Clean up Mosel instance after a run
+!**************************************
+procedure endinstance(discon:boolean)
+ unload(mdr)
+ if discon or minst.status<>0 then
+  disconnect(minst)
+ else
+  setdefstream(minst,"null:","","")
+ end-if
+end-procedure
+
+!***********************************
+!* Execute a model on the instance
+!***********************************
+function execmos(torun:text, parms:text):integer
+ if torun<>"" then
+  if safecompile("g",string(torun),"tmp:bimfile")<>0 or
+     safeload(mdr,"tmp:bimfile") then
+   returned:=-1
+  else
+   run(mdr,parms)
+   waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
+   if waitexpired then
+    write("(killed) ")
+    stop(mdr)
+    waitfor(EVENT_END,-1,WAIT_EXACT)
+   end-if
+   dropnextevent
+   if mdr.status<>0 then
+    returned:=-2
+   else
+    returned:=mdr.exitcode
+   end-if
+   unload(mdr)
+  end-if
+ end-if
+end-function
+
+!********************************************
+!* Build what has to be built before the run
+!********************************************
+function dobuild(tobuild:text):boolean
+ declarations
+  lsb:list of text
+ end-declarations
+
+ if tobuild<>"" then
+  lsb:=splitlist(tobuild)
+  forall(td in lsb) do
+   if endswith(td,".bim") then
+    if safecompile("g", string(copytext(td,1,td.size-4)+".mos"),
+                                                 string(td))<>0 then
+     returned:=true
+     break
+    end-if
+   elif domake(td) then
+    returned:=true
+    break
+   end-if
+  end-do
+ end-if
+end-function
+
+!***************************
+!* Get all files to be run
+!***************************
+function gettotest(path:text):list of text
+ declarations
+  f:text
+  lsf:list of text
+  allexcludepat=["*.dir"+getdirsep+"*"]+excludepat
+ end-declarations
+
+ while (path.size>1 and endswith(path,getdirsep))
+  deltext(path,path.size,path.size)
+
+ if filexists(path) then
+  f:=pathsplit(SYS_FNAME,path,path)
+  returned:=[f]
+ elif endswith(path,".dir") and bittest(getfstat(path), SYS_TYP)=SYS_DIR then
+  f:=pathsplit(SYS_FNAME,path,path)
+  returned:=[f]
+ else
+  findfiles(SYS_RECURS+SYS_NODIR, lsf, path, "*.mos|*.zip|*.tar|*.tgz|*.tar.gz")
+  forall(l in lsf)
+   if and(pat in allexcludepat) not pathmatch(l,pat) then
+    returned+=[l]
+   end-if
+  lsf:=[]
+  findfiles(SYS_RECURS+SYS_DIRONLY, lsf, path, "*.dir")
+  forall(l in lsf)
+   if and(pat in excludepat) not pathmatch(l,pat) then
+    returned+=[l]
+   end-if
+  qsort(SYS_UP,returned)
+ end-if
+end-function
+
+!*********************
+!* Clear a directory
+!*********************
+procedure cleardir(p:text,rmd:boolean)
+ declarations
+  lsf:list of text
+  err:integer
+ end-declarations
+
+ if minst.status=0 then
+  ! If we have built modules, unload them before cleanup
+  findfiles(SYS_NODIR+SYS_NOSORT, lsf, p, "*.dso")
+  if lsf.size>0 then
+   ! 'flushdso' available in Mosel 3.13.1 and newer
+   setparam("ioctrl",true)
+    setcontrol(minst,"flushdso","")
+    dummy:=getparam("iostatus")
+   setparam("ioctrl",false)
+  end-if
+ end-if
+
+ removefiles(SYS_RECURS,p,"*")
+
+ if getsysstat<>0 then
+  writeln("Failed to remove files from ",p)
+ elif sysname="windows" then
+ ! Under Windows there may remain dso/exe files still loaded, these will have
+ ! been marked for deletion & will be actually deleted once they are unloaded.
+  allgone:=false
+  forall(i in 0..120) do
+   if i>0 then sleep(500); end-if
+   lsf:=[]
+   findfiles(SYS_RECURS+SYS_NODIR+SYS_NOSORT, lsf, p, "*")
+   if getsize(lsf)=0 then allgone:=true; break; end-if
+  end-do
+  if not allgone then
+   writeln("Unable to remove all files from ", p, ", remaining files: ", lsf)
+  end-if
+ end-if
+ if rmd then
+  removedir(p)
+ end-if
+end-procedure
+
+!*************************
+!* Copy a directory tree
+!*************************
+procedure copydir(src:text, dst:string)
+ declarations
+  lsf:list of text
+ end-declarations
+ findfiles(SYS_RECURS, lsf, src, "*")
+ if lsf.size>0 then
+  newtar(0, "tmp:ttar", src, lsf)
+  untar("tmp:ttar", dst)
+  fdelete("tmp:ttar")
+ end-if
+end-procedure
+
+!**************************************
+!* Find the "main" file in a directory
+!**************************************
+function findmain(path:text, totest:text):integer
+ declarations
+  lsf:list of text
+ end-declarations
+
+ totest:=""
+ returned:=-1
+
+ findfiles(SYS_NODIR, lsf, path, "main.mos|main.c|Main.java|main.java")
+ if lsf.size<>1 then
+  lsf:=[]
+  findfiles(SYS_NODIR, lsf, path, "*.mos|*.c|*.java")
+ end-if
+
+ if lsf.size=1 then
+  totest:=lsf.first
+  forall(e in [".mos",".c",".java"],i as counter)
+   if endswith(totest,e) then
+    returned:=i-1
+    break
+   end-if
+ end-if
+end-function
+
+!***********************************
+!* Process options of a source file
+!***********************************
+procedure getopts(f:text, opts:array(set of string) of text)
+ declarations
+  line,val:text
+  parm:string
+ end-declarations
+
+ delcell(opts)
+ fopen(WKDIR+"/"+f,F_INPUT)
+ while(readtextline(line)>=0) do
+  trim(line)
+  if startswith(line,CONFLINE) then
+   deltext(line,1,CONFLINE.size)
+   parm:=splicfgline(line,val)
+   if parm in OPTNAMES then
+    if val="" then
+     delcell(opts(parm))
+    elif OPTTYPES(parm)='lst' and opts(parm).size>0 then
+     opts(parm)+=' '+val
+    elif OPTTYPES(parm)='lns' and opts(parm).size>0 then
+     opts(parm)+="\n"+val
+    else
+     opts(parm):=val
+    end-if
+   else
+    writeln("   Warning: option `", if(parm.size>0,text(parm),line),
+            "' ignored (file ", f, ")")
+   end-if
+  end-if
+ end-do
+ fclose(F_INPUT)
+end-procedure
+
+!************************************
+!* Set default environment variables
+!************************************
+procedure defsetenv
+ setenv("DSODIR",env_dsodir)
+ setenv("MOSEL_DSO",env_dsopath)   ! For submodels created by worker
+ setenv("MOSEL_BIM",env_bimpfx)    ! For submodels created by worker
+ setenv("CLASSPATH",env_clspath)
+end-procedure
+
+!**********************************
+!* Update environment is requested
+!**********************************
+procedure updenv(env:text, spe:set of string)
+ declarations
+  mp:array(0..3) of textarea
+  lp:list of text
+ end-declarations
+
+ lp:=splitlist(env,10)
+ forall(e in lp) do
+  trim(e)
+  if regmatch(e,'^([-a-z0-9]+)\.([A-Za-z0-9_]+) *=(.*)',1,REG_EXTENDED,mp) then
+   esys:=copytext(e,mp(1))
+   if esys<>sysname and esys<>sysname+sysarch then
+    if endswith(esys,"32") or endswith(esys,"64") then
+     deltext(esys, esys.size-1, esys.size)
+    end-if
+    if string(esys) not in KNOWNSYSNAMES then
+     writeln("Warning: option `setenv ", e, "' ignored (unknown system name)")
+    end-if
+    next
+   else
+    ename:=copytext(e,mp(2))
+    eval:=copytext(e,mp(3))
+   end-if
+  elif regmatch(e, '^([A-Za-z0-9_]+) *=(.*)', 1, REG_EXTENDED, mp) then
+   ename:=copytext(e,mp(1))
+   eval:=copytext(e,mp(2))
+  else
+   writeln("Warning: option `setenv ", e, "' ignored (syntax error)")
+   next
+  end-if
+  spe+={string(ename)}
+  setenv(ename,expenv(eval))
+ end-do
+
+ ! If new variables have been defined, restart Mosel instance
+ if spe.size>0 then
+  endinstance(true)
+ end-if
+end-procedure
+
+!***************************************
+!* Expand ${} for environment variables
+!***************************************
+function expenv(ev:text):text
+ declarations
+  mp:array(0..1) of textarea
+ end-declarations
+
+ returned:=ev
+ while(regmatch(returned, '\${\([A-Za-z_][A-Za-z0-9_]*\)}', 1, 0, mp)) do
+  eval:=getenv(copytext(returned,mp(1)))
+  deltext(returned,mp(0))
+  if eval.size>0 then
+   inserttext(returned, eval, mp(0).start)
+  end-if
+ end-do
+end-function
+
+!*****************************************
+!* Check whether a test should be skipped
+!*****************************************
+function toskip(opts:array(set of string) of text):boolean
+ if opts("skip")="true" then
+  returned:=true
+ else
+  if opts("skip_host")<>"" then
+   lsn:=splitset(opts("skip_host"))
+   if syshost in lsn then
+    returned:=true
+   end-if
+  end-if
+  if opts("skip_sys")<>"" then
+   lsn:=splitset(opts("skip_sys"))
+   if sysname in lsn or sysname+sysarch in lsn then
+    returned:=true
+   end-if
+  end-if
+  if opts("only_host")<>"" then
+   lsn:=splitset(opts("only_host"))
+   if syshost not in lsn then
+    returned:=true
+   end-if
+  end-if
+  if opts("only_sys")<>"" then
+   lsn:=splitset(opts("only_sys"))
+   if sysname not in lsn and sysname+sysarch not in lsn then
+    returned:=true
+   end-if
+  end-if
+ end-if
+end-function
+
+!*******************************************
+!* Split a line of the form name |:|= value
+!*******************************************
+function splicfgline(line:text,val:text):string
+ declarations
+  mp:array(0..2) of textarea
+  iv:integer
+  dv:real
+ end-declarations
+ trim(line)
+ if regmatch(line, '^\([a-zA-Z0-9_]*\) *[ :=] *\(.*\)', 1, 0, mp) then
+  returned:=string(copytext(line,mp(1)))
+  val:=copytext(line,mp(2))
+  trim(val)
+  if val.size>0 and returned in OPTNAMES then
+   case OPTTYPES(returned) of
+    'int': do
+	 dv:=parseint(val,1)
+	 if getparam("sys_endparse")<>val.size+1 or getsysstat<>0 then
+	  returned:=""
+	 end-if
+	end-do
+    'boo': do
+	 val:=tolower(val)
+	 if val<>"true" and val<>"false" then
+	  returned:=""
+	 end-if
+	end-do
+    'dbl': do
+	 dv:=parsereal(val,1)
+	 if getparam("sys_endparse")<>val.size+1 or getsysstat<>0 then
+	  returned:=""
+	 end-if
+	end-do
+    ! else: text
+   end-case
+  end-if
+ ! Special case of a Boolean tag (only the name of the tag for 'true')
+ elif regmatch(line, '^\([a-zA-Z0-9_]*\)$', 1, 0, mp) then
+  returned:=string(copytext(line,mp(1)))
+  if returned in OPTNAMES and OPTTYPES(returned)='boo' then
+   val:="true"
+  else
+   returned:=""
+   val:=""
+  end-if
+ end-if
+end-function
+
+!****************************************************
+!* Check whether a file exists and is a regular file
+!****************************************************
+function filexists(f:text):boolean
+ fstat:=getfstat(f)
+ if fstat<>0 then
+  returned:=bittest(fstat,SYS_TYP)=SYS_REG and bittest(fstat,SYS_MOD)>=SYS_READ
+ ! else: returned:=false
+ end-if
+end-function
+
+!************************************
+!* Look for a pattern in a log file
+!************************************
+function findpattern(rpat:text,f:text):boolean
+ declarations
+  mp:array(0..0) of textarea
+  line:text
+  lp:list of text
+ end-declarations
+
+ if rpat<>"" then
+  if not filexists(f) then
+   returned:=true
+  else
+   lp:=splitlist(rpat,10)
+   p:=string(lp.first)
+   fopen(f,F_INPUT)
+   returned:=true
+   while(readtextline(line)>=0) do
+    if regmatch(line, p, 1, REG_EXTENDED, mp) then
+     cuthead(lp,1)
+     if lp.size=0 then
+      returned:=false
+      break
+     else
+      p:=string(lp.first)
+     end-if
+    end-if
+   end-do
+   fclose(F_INPUT)
+  end-if
+ end-if
+end-function
+
+!****************************************************
+!* Split a list of names (with choice of separator)
+!****************************************************
+function splitlist(t:text, sc:integer):list of text
+ declarations
+  pctx:parsectx
+ end-declarations
+
+ pctx.sepchar:=sc
+ while(nextfield(t,pctx)) do
+  returned+=[parsetext(t,pctx)]
+ end-do
+end-function
+
+!*************************
+!* Split a list of names
+!*************************
+function splitlist(t:text):list of text
+ returned:=splitlist(t,32)
+end-function
+
+!************************
+!* Split a set of names
+!************************
+function splitset(t:text):set of string
+ declarations
+  pctx:parsectx
+ end-declarations
+
+ pctx.sepchar:=32  ! ' '
+ while(nextfield(t,pctx)) do
+  returned+={string(parsetext(t,pctx))}
+ end-do
+end-function
+
+!********************************
+!* Record failure in the report
+!********************************
+procedure reportfailure(f:text)
+ fopen(repfile,F_OUTPUT+F_APPEND)
+ writeln("+"*78)
+ writeln("="*(77-f.size)," ",f)
+ if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+  writeln("==== ", "output", " ====")
+ end-if
+ fclose(F_OUTPUT)
+ fcopy(WKDIR+"/"+OUT, F_SILENT, repfile, F_APPEND)
+ if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+  fopen(repfile,F_OUTPUT+F_APPEND)
+  writeln("==== ", "error", " ====")
+  fclose(F_OUTPUT)
+  fcopy(WKDIR+"/"+ERR, F_SILENT, repfile, F_APPEND)
+ end-if
+end-procedure
+
+!**********************************
+!* Prepare system dependent stuff
+!**********************************
+procedure setsysdep
+ sysname:=string(tolower(getsysinfo(SYS_NAME)))
+ sysarch:=integer(getsysinfo(SYS_ARCH))
+ syshost:=getsysinfo(SYS_NODE)
+
+ if sysname="windows" then
+   ! use nmake if it is available
+   fopen("null:",F_OUTPUT)
+   system("nmake /nologo /?")
+   fclose(F_OUTPUT)
+   usenmake := getsysstat = 0
+   if not usenmake then
+     writeln("WARNING: Could not find 'nmake'! Using 'make'.")
+   end-if
+ end-if
+
+ if REPFILE<>"" then
+  repfile:=REPFILE
+ elif REPDATED then
+  repfile:=BASEREP+"_"+string(date(SYS_NOW))+".txt"
+ else
+  repfile:=BASEREP+".txt"
+ end-if
+ if REPRESET then
+  fdelete(repfile)
+ end-if
+ fopen("tmp:makefile",F_OUTPUT)
+ writeln(".SUFFIXES: .bim .mos .dso .java .class")
+ if sysname="windows" then
+  if sysarch=32 then
+   writeln('CFLAGS=/nologo /Zi /MD /I"$(XPRESSDIR)\include"')
+  else
+   writeln('CFLAGS=/nologo /Zi /MD /GS- /I"$(XPRESSDIR)\include"')
+  end-if
+  writeln(`WIN32
+.c.exe:
+	$(CC) $(CFLAGS) $< /link /libpath:"$(XPRESSDIR)\lib" xprm_mc.lib xprm_rt.lib xprd.lib bindrvMD.lib
+.c.dso:
+	$(CC) $(CFLAGS) /LD $< /Fe$*.dso
+.mos.bim:
+	mosel compile -g $*.mos
+.java.class:
+	javac $*.java
+WIN32`)
+ else				! 32bit Unix
+  if sysarch=32 then
+   case sysname of
+    "linux":writeln(`LIN32
+CFLAGS=-m32 -D_REENTRANT -I$(XPRESSDIR)/include
+MAKEDSO=$(CC) -m32 -shared
+LIN32`)
+    "sunos":writeln(`SOL32
+CFLAGS=-D_REENTRANT -Kpic -I$(XPRESSDIR)/include
+LDFLAGS=-lrt -lsocket -lnsl -lm
+MAKEDSO=$(LD) -G
+SOL32`)
+    "hp-ux":writeln(`HP32
+CFLAGS=+Z +DAportable -D_POSIX_C_SOURCE=199506L -I$(XPRESSDIR)/include
+LDFLAGS=-lm -Wl,+s
+MAKEDSO=$(LD) -b +s
+HP32`)
+    "aix":writeln(`AIX32
+CFLAGS=-q32 -D_THREAD_SAFE -I$(XPRESSDIR)/include
+LDFLAGS=-lm -brtl
+MAKEDSO=$(CC) -G -q32 -brtl
+AIX32`)
+   end-case
+  else				! 64bit Unix
+   case sysname of
+    "linux":writeln(`LIN64
+CFLAGS=-m64 -fpic -D_REENTRANT -I$(XPRESSDIR)/include
+LDFLAGS=-fopenmp
+MAKEDSO=$(CC) -m64 -shared
+LIN64`)
+    "sunos":writeln(`SOL64
+CFLAGS=-m64 -D_REENTRANT -Kpic -I$(XPRESSDIR)/include
+LDFLAGS=-lrt -lsocket -lnsl -lm
+MAKEDSO=$(LD) -G
+SOL64`)
+    "hp-ux":writeln(`HP64
+CFLAGS=+Z +DD64 -D_POSIX_C_SOURCE=199506L -I$(XPRESSDIR)/include
+LDFLAGS=-lm -Wl,+s
+MAKEDSO=$(LD) -b +s
+HP64`)
+    "aix":writeln(`AIX64
+CFLAGS=-q64 -D_THREAD_SAFE -I$(XPRESSDIR)/include
+LDFLAGS=-lm -brtl
+MAKEDSO=$(CC) -G -q64 -brtl
+AIX64`)
+    "darwin":writeln(`MAC
+CFLAGS=-m64 -I$(XPRESSDIR)/include
+MAKEDSO=$(CC) -m64 -dynamiclib
+MAC`)
+   end-case
+  end-if
+  writeln(`UNX
+.c:
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -L$(XPRESSDIR)/lib -lxprm_mc -lxprm_rt -lxprd -lbindrv -lpthread -o $*
+.c.dso:
+	$(CC) -c $(CFLAGS) $<
+	$(MAKEDSO) $*.o -o $*.dso
+.mos.bim:
+	mosel compile -g $*.mos
+.java.class:
+	javac $*.java
+UNX`)
+  end-if
+  fclose(F_OUTPUT)
+end-procedure
+
+!************************************
+!* Load a model on 'minst' "safely"
+!************************************
+function safeload(m:Model, bf:string):boolean
+ setparam("ioctrl",true)
+  load(minst,m,bf)
+ setparam("ioctrl",false)
+ returned:= getparam("iostatus")<>0
+end-function
+
+!***************************************
+!* Compile a model on 'minst' "safely"
+!***************************************
+function safecompile(opts:string, src:string, dst:string):integer
+ setparam("ioctrl",true)
+  returned:=compile(minst, opts, src, dst)
+ setparam("ioctrl",false)
+ dummy:=getparam("iostatus")
+end-function
+
+!***************************
+!* Start an xprmsrv server
+!***************************
+procedure startxsrv
+ declarations
+  inst:Mosel
+ end-declarations
+
+ if PIDFILE<>"" then
+  fopen("null:", F_ERROR)
+  c:=connect(inst, "127.0.0.1")
+  fclose(F_ERROR)
+  if c=0 then
+   disconnect(inst)
+   writeln("Warning: using an existing xprmsrv server - remote tests may fail")
+  else
+   fopen("tmp:xcfg", F_OUTPUT)
+   writeln("XPRMSRV_ACCESS=127.0.0.1 ", getsysinfo(SYS_NODE))
+   writeln("[xpress]")
+   writeln("MOSEL_CWD=", expandpath(WKDIR))
+   fclose(F_OUTPUT)
+   system("xprmsrv -d -pf "+PIDFILE+" "+expandpath("tmp:xcfg"))
+   writeln("xprmsrv server started")
+  end-if
+ end-if
+end-procedure
+
+!***************************
+!* Stop the xprmsrv server
+!***************************
+procedure stopxsrv
+ if PIDFILE<>"" and filexists(PIDFILE) then
+  fcopy(PIDFILE,"text:tfile")
+  if sysname="windows" then
+  ! Win32: no way to kill a process from a 32bit process on a 64bit system...
+   system("tskill "+tfile)
+!   system("taskkill /F /PID "+tfile)
+   if getsysstat=0 then
+    fdelete(PIDFILE)
+    writeln("xprmsrv server stopped")
+   else
+    writeln("Warning: failed to kill xprmsrv server (pid:", tfile, ")")
+   end-if
+  else
+   system("kill "+tfile)
+   writeln("xprmsrv server stopped")
+  end-if
+ end-if
+end-procedure
+
+!*****************************************
+!* Execute 'make' on the remote instance
+!*****************************************
+function domake(f:text):boolean
+ fopen("tmp:domake.mos",F_OUTPUT)
+ writeln(`DOMAKE
+model domake
+uses 'mmsystem'
+parameters
+ TODO=""
+end-parameters
+DOMAKE`)
+
+ if usenmake then
+  writeln('system("nmake /nologo "+TODO)')
+ else
+  writeln('system("make "+TODO)')
+ end-if
+
+ writeln(`DOMAKE
+exit(getsysstat)
+end-model
+DOMAKE`)
+ fclose(F_OUTPUT)
+ returned:=execmos("rmt:tmp:domake.mos","TODO="+f)<>0
+end-function
+
+!********************************************
+!* Run an executable on the remote instance
+!********************************************
+function dorun(f:text):boolean
+ fopen("tmp:dorun.mos",F_OUTPUT)
+ writeln(`DOMAKE
+model domake
+uses 'mmsystem'
+parameters
+ TODO=""
+end-parameters
+system(TODO)
+exit(getsysstat)
+end-model
+DOMAKE`)
+ fclose(F_OUTPUT)
+ if endswith(f,".class") then
+  if sysname="windows" then
+   todo:=text('java -enableassertions ')+copytext(f,1,f.size-6)
+  else
+   todo:=text('java -d')+sysarch+" -enableassertions "+copytext(f,1,f.size-6)
+  end-if
+ else
+  todo:='.'+getdirsep+f
+ end-if
+ returned:=execmos("rmt:tmp:dorun.mos","TODO='"+todo+"'")<>0
+end-function
+
+end-model
