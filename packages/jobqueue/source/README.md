@@ -1,6 +1,6 @@
 ## Package jobqueue - source files
 
-Execute *make.mos*  to generate the compile package file *jobqueue.bim*.
+Execute *make.mos*  to generate the compiled package file *jobqueue.bim*.
 
 Build options:
 *   DOC=true :   generate online doc for the 'jobqueue' package
