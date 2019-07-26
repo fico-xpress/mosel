@@ -1,0 +1,41 @@
+(!*******************************************************
+   Mosel Example Problems 
+   ======================
+
+   file simple.mos
+   ```````````````
+   Model with different runtime parameter types
+
+   author: B. Hafizoglu, May 2018
+
+   (c) Copyright 2018 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+
+model "Runtime parameters"
+ uses "mmsystem"
+ 
+ parameters
+  WAIT_IN_SUBMODEL = 0
+  IMPORTANT_PARAM = "nothing"
+ end-parameters
+
+ writeln("I am starting right now!")
+ sleep(WAIT_IN_SUBMODEL*1000)
+ writeln("I waited ", WAIT_IN_SUBMODEL, 
+ " seconds before writing this and my important parameter value is '",
+  IMPORTANT_PARAM, "'")
+
+end-model 

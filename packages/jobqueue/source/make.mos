@@ -1,0 +1,80 @@
+(!******************************************************
+   Mosel jobqueue Package
+   ====================== 
+
+   file make.mos 
+   `````````````
+   Building the 'jobqueue' package from its source components:
+   * jqctrl.mos (worker controler model)
+   * jqcommon.mos (package with shared declarations)
+   * jqsched.mos (scheduler model)
+   * jobqueue.mos (public package interface routines)
+   All files are expected to be in the same location as this file.
+   The result from the default build process is a single BIM file
+   for use by user (master) models.
+   
+   Build options:
+   DOC=true    generate online doc for the 'jobqueue' package
+   DBG=true    debug compilation for all components
+   CLEAN=true  remove all generated files (no build takes place)
+ 
+   author: Y. Colombani, Jan. 2019
+
+   (c) Copyright 2019 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model jqmake
+uses 'mmjobs','mmsystem'
+parameters
+  DOC=false             ! Whether to generate online doc
+  DBG=false             ! Whether to compile with debug information
+  CLEAN=false           ! Whether to clean up in place of (re)building
+end-parameters
+
+! Build all components using temporary locations for auxiliary files
+procedure doall(opt:string)
+  writeln("Checking jqctrl.mos")
+  if compile(opt,'jqctrl.mos',"null:")<>0 then
+    exit(1)
+  end-if
+  writeln("Compiling jqcommon.mos")
+  if compile(opt,"jqcommon.mos","tmp:jqcommon.bim")<>0 then
+    exit(2)
+  end-if
+  writeln("Compiling jqsched.mos")
+  if compile(opt+"bx=tmp:","jqsched.mos","tmp:jqsched.bim")<>0 then
+    exit(3)
+  end-if
+  writeln("Compiling jobqueue.mos")
+  if compile(opt+"bx=tmp: ix=tmp:","jobqueue.mos")<>0 then
+    exit(4)
+  else
+    writeln("jobqueue.bim created")
+  end-if
+end-procedure
+
+! **** The actual program starts here
+fdelete("jobqueue.bim")
+if CLEAN then
+  fdelete("jobqueue_doc.xml")
+  removefiles(SYS_RECURS,"jobqueue_html","*")
+  removedir("jobqueue_html")
+else
+  doall(if(DOC,"-D ","")+if(DBG,"-G ",""))
+  if DOC then
+    system("moseldoc -f jobqueue")
+  end-if
+end-if
+end-model

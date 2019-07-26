@@ -1,0 +1,99 @@
+(!******************************************************
+   Mosel jobqueue Package
+   ====================== 
+
+   file jqctrl.mos 
+   ````````````````
+   Submodel started by the 'jqsched' model
+   - Controler for the model execution on a specific worker. 
+     Supervises the model execution, creates and cleans up
+     working directories, and cleans up ouput/log files created 
+     by the execution of a computing task.
+ 
+   author: Y. Colombani, Feb. 2019
+
+   (c) Copyright 2019 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model jqctrl
+uses 'mmsystem','mmjobs'
+
+parameters
+ ID="xxx"                       ! Jobqueue instance identifier
+ CMD=-1                         ! Controler model execution mode
+ FNAME=""                       ! Name of model file to be run for a task
+ RTPARMS=""                     ! Runtime parameters for task execution
+ STSFILE=""                     ! Log filename for this worker 
+end-parameters
+
+declarations
+ mo:Model                       ! Model executed on the worker
+end-declarations
+
+! Report the worker status via a log file
+procedure returnstatus(s:integer,c:integer)
+ initialisations to STSFILE
+  s as "status"
+  c as "code"
+ end-initialisations
+ exit(s)
+end-procedure
+
+! The main program code: model behaviour depends on the 'CMD' parameter
+case CMD of
+ 0: do                          ! Create working directory
+     makepath("tmp:wd_"+ID)
+     exit(getsysstat)
+    end-do
+ 1: do                          ! Release working directory
+     removefiles(SYS_RECURS,"tmp:wd_"+ID,"*")
+     removedir("tmp:wd_"+ID)
+     fdelete("tmp:out_"+ID)
+     fdelete("tmp:err_"+ID)
+    end-do
+ 2: do                          ! Execute the specified model on this worker
+     if endswith(FNAME,".mos") then
+      rts:=compile("bx=./",FNAME)
+      if rts<>0 then
+       returnstatus(-11,rts)
+      else
+       torun:=string(copytext(FNAME,1,FNAME.size-3)+"bim")
+      end-if
+     else
+      torun:=FNAME
+     end-if
+     setparam("ioctrl",true)
+      load(mo,torun)
+     setparam("ioctrl",false)
+     if getparam("iostatus")<>0 then
+      returnstatus(-12,0)
+     else
+      setworkdir(mo,getparam("workdir"))
+      run(mo,RTPARMS)
+      repeat
+       wait
+       evt:=getnextevent
+       if evt.fromid=0 then
+        stop(mo)
+       end-if
+      until evt.class=EVENT_END
+      returnstatus(mo.status,mo.exitcode)
+     end-if
+    end-do
+ else
+  writeln("Missing or unhandled command (", CMD, ")")
+  exit(1)
+end-case
+end-model

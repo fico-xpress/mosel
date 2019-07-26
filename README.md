@@ -22,6 +22,8 @@ Component | Type | Description | Notes
 [myqxprs](modules/myqxprs/README.md) | DSO | Example of using the library interface of the module *mmnl* that extends the Mosel NI matrix interface with handling of nonlinearities for connecting an NLP solver (quadratic solver of Xpress Optimizer) | Requires Xpress Optimizer libraries
 [math](modules/math/README.md) | DSO | Additional Maths functions for the Mosel language | Compiled version is included in the Mosel distribution
 [random](modules/random/README.md) | DSO | Alternative random number generators | Compiled version is included in the Mosel distribution
+[jobqueue](packages/jobqueue/README.md) | BIM | Managing the remote execution of submodels via *mmjobs* functionality | -
+
 
 ### Mosel testing system
 

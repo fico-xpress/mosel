@@ -1,0 +1,161 @@
+(!******************************************************
+   Mosel jobqueue Package
+   ====================== 
+
+   file jqcommon.mos 
+   `````````````````
+   Package with declarations shared by all components of
+   'jobqueue' and internal initialization routines.
+ 
+   author: Y. Colombani, Feb. 2019
+
+   (c) Copyright 2019 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+
+package jqcommon
+uses 'mmsystem'
+nssearch jsched
+
+public declarations
+ ! model status in addition to mmjobs constants
+ RT_PENDING  =-10  !@doc.descr Model status: waiting for execution
+ RT_CANCELLED=-11  !@doc.descr Model status: cancelled before execution
+ RT_COMPERR  =-12  !@doc.descr Model status: compilation failed
+ RT_LOADERR  =-13  !@doc.descr Model status: bim file could not be loaded
+ RT_FCPYERR  =-14  !@doc.descr Model status: files could not be uploaded to worker
+ RT_SYSERR   =-15  !@doc.descr Model status: controler could not be run on worker
+
+ (!@doc.
+   @descr a job
+   @recflddescr srcfiles list of files to upload on the worker
+   @recflddescr dstfiles names of the files on the worker
+   @recflddescr resultfile file containing the result after execution
+   @recflddescr maxretry maximum number of attemps at running the job in case of server disconnection
+   @info entities of this type should be populated using <fctRef>jobinit</fctRef>, <fctRef>jobadd</fctRef> or <fctRef>jobsetresult</fctRef>
+ !)
+ jq_job=public record
+         srcfiles:list of text  ! source files
+         dstfiles:list of text  ! destination files
+	 resultfile:text        ! file where result will be saved (if any)
+	 maxretry:integer       ! maximum number of attemps at running the job in case of server disconnection
+        end-record
+
+ (!@doc.
+   @descr queue information as returned by <fctRef>queuegetinfo</fctRef>
+   @recflddescr nbwk total number of workers
+   @recflddescr nbdis number of disabled workers
+   @recflddescr running list of running tasks
+   @recflddescr pending list of tasks waiting for execution
+ !)
+ jq_qinfo=public record
+           nbwk:integer         ! total number of workers
+           nbdis:integer        ! number of disabled workers
+	   running:list of integer
+	   pending:list of integer
+          end-record
+end-declarations
+
+declarations
+!@doc.autogen=false
+ jsched~CMD_OK=      100
+ jsched~CMD_ERR=     101
+ jsched~CMD_END=     102
+ jsched~CMD_VERBOSE= 103
+ jsched~CMD_NEWQUEUE=104
+ jsched~CMD_NEWNODE= 105
+ jsched~CMD_NEWTASK= 106
+ jsched~CMD_QUEPEND= 107
+ jsched~CMD_QUEWAIT= 108
+ jsched~CMD_TSKFREE= 109
+ jsched~CMD_QUEFLUS= 110
+ jsched~CMD_QUEREST= 111
+ jsched~CMD_TSKFQUE= 112
+ jsched~CMD_TSKCANC= 113
+ jsched~CMD_DELQUEUE=114
+ jsched~CMD_TSKREST= 115
+ jsched~CMD_QINFO  = 116
+
+ jsched~msgfile:string
+ jsched~wkdir:string
+ myid:string
+!@doc.autogen=true
+end-declarations
+
+(!@doc.
+  @descr File name of the output stream of a task
+  @param tid a task ID
+  @return a file name
+  @info This file is populated only after execution of the task
+!)
+public function taskoutfile(tid:integer):string
+ returned:=wkdir+"/out_"+tid
+end-function
+
+(!@doc.
+  @descr File name of the error stream of a task
+  @param tid a task ID
+  @return a file name
+  @info This file is populated only after execution of the task
+!)
+public function taskerrfile(tid:integer):string
+ returned:=wkdir+"/err_"+tid
+end-function
+
+(!@doc.
+  @descr Result file of a task
+  @param tid a task ID
+  @return a file name
+  @info This file is populated only after execution of the task
+!)
+public function taskresfile(tid:integer):string
+ returned:=wkdir+"/res_"+tid
+end-function
+
+(!@doc.
+  @descr Status file of a task
+  @param tid a task ID
+  @return a file name
+  @info This file can be used to retrieve the status of a task
+!)
+public function taskstatfile(tid:integer):string
+ returned:="shmem:sts_"+myid+"_"+tid
+end-function
+
+(!@doc.
+  @descr Host information file of a task
+  @param tid a task ID
+  @return a file name
+  @info This file contains information on the host running the task. It is available as soon as the task is running
+!)
+public function taskhostfile(tid:integer):string
+ returned:="shmem:hst_"+myid+"_"+tid
+end-function
+
+!@doc.autogen=false
+
+stderr:=getfid(F_ERROR)
+
+procedure jsched~jqinit(id:string)
+ myid:=id
+ msgfile:="shmem:msg"+myid
+ wkdir:="tmp:jq"+myid
+end-procedure
+
+procedure jsched~logmsg(msg:text)
+ fwriteln(stderr,formattext("JobQueue:%5.2f:%s",gettime,msg))
+end-procedure
+
+end-package
