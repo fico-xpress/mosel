@@ -18,9 +18,9 @@ tools:
 As input, the *moseltest* program expects either a directory containing the files
 to process or a single file name. This input information is passed
 via the SRCDIR model parameter (default value: 'alltests').
-For instance to run the Mosel program 'mytest.mos':
+For instance to run the Mosel program [myexampletest.mos](myexampletest.mos):
 ```
- mosel moseltest SRCDIR=mytest.mos
+ mosel moseltest SRCDIR=myexampletest.mos
 ```
 Running a set of tests in the default location 'alltests':
 ```
@@ -31,7 +31,7 @@ directory structure is accepted (i.e. all subdirectories are traversed
 and files are processed in alphabetical order).
 
 ## Documentation
-See the file [readme.txt](readme.txt) for the full documentation of this program.
+See the file [readme.txt](readme.txt) or the [PDF documentation](moseltesting.pdf) for the full documentation of this program.
 
 ## Legal
 

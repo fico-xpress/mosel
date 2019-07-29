@@ -1,0 +1,63 @@
+(!******************************************************
+   Mosel Testing Examples
+   ======================
+
+   file myexampletest.mos
+   ``````````````````````
+   Demonstrating the use of basic testing system commands
+
+   Command to run this model through the Mosel Testing System
+   (assuming both files are in the same location):
+
+     mosel moseltest SRCDIR=myexampletest.mos
+
+   Keeping the working directory (by default a log file is produced
+   only in case of errors):
+
+     mosel moseltest SRCDIR=myexampletest.mos KEEPDIR=true
+
+   author: S.Heipcke, Oct 2018
+
+  (c) Copyright 2018 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+
+! NB: 'outexpect' and 'errexpect' work with extended regular expressions 
+!*! outexpect f\(x\)=0
+!*! outexpect f\(x\)=-10
+!*! outexpect f\(x\)=20
+!*! errexpect Math error test
+!*! runstat 3
+
+model "my test example"
+ options keepassert
+
+ function dosomething(a: integer): integer
+  returned:=2*a
+  writeln("f(x)=", returned)
+ end-function
+
+ ! Various ways of calling the routine that is to be tested
+ res:=dosomething(0)
+ asproc(dosomething(-5))
+
+ ! Mosel's 'assert' can be used within the testing system, remember to
+ ! specify the option 'keepassert' in this case
+ assert(dosomething(10)=20, "Expected value "+20)
+
+ ! This causes an error (model result status value: RT_MATHERR=3)
+ setmatherr("Math error test")
+
+end-model 

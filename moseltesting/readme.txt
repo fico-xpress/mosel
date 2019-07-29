@@ -73,6 +73,51 @@ as well as in a session specific modules directory (see tags 'module' and
 'package' below). The location of this directory is recorded in the
 environment variable DSODIR.
 
+Other configuration settings
+----------------------------
+Report generation settings
+``````````````````````````
+Unless Teamcity mode is enabled (see below) moseltest generates a report in 
+the file specified via parameter REPFILE or if no specific name is set via 
+this parameter using the base report name from parameter BASEREP, optionally 
+generating a unique report file name by appending a date to it (depending on 
+setting of REPDATES), alternatively appending to or overwriting any existing 
+file of the specified name (setting of REPRESET). 
+The report is formatted with the maximum line length specified via LINELEN.
+The parameter SAVELOGS indicates whether to keep logs of successful executions 
+(otherwise only logs of those executions that have resulted in an unexpected 
+error status are kept).
+
+xprmsrv server startup
+``````````````````````
+If any tests require an xprmsrv server and no such server is running before 
+the start of moseltest then the parameter PIDFILE needs to define the name of 
+an empty file to which write access is possible. If such a PIDFILE is specified
+then moseltest will startup an xprmsrv server and use this file to store the 
+process ID of the server in order to be able to stop it when the execution of 
+moseltest is about to terminate.
+
+Execution time limit
+````````````````````
+The parameter MAXWAIT specifies the maximum time in seconds allowed for every 
+individual execution of a test; the execution is interrupted by moseltest after
+this delay.
+ 
+Mosel environment variables
+```````````````````````````
+If the parameter KEEPENV is 'true' then the MOSEL_DSO and MOSEL_BIM settings 
+are inherited from current environment, otherwise they are re-initialized by 
+moseltest.
+
+Teamcity mode
+`````````````
+If Teamcity mode is enabled (by setting parameter TC to 'true') then no report 
+file is generated, in its place output in Teamcity format is generated that is 
+sent to the output stream. The length of the output sent to Teamcity is limited 
+to the number of characters specified in TCMAXLOG, truncating from the end of 
+the message string if required.
+
+
 moseltest tags
 ==============
 By default, any specified test program is run and an exit status of 0 is 
@@ -132,6 +177,10 @@ runstat: expected execution status (integer)
 	By default a test is successful after the model execution returns
 	the execution status value 0. This tag specifies an alternative
 	execution status.
+exitcode: expected exit code (integer)
+	By default a test is successful after the model execution returns
+	the execution exit code 0. This tag specifies an alternative
+	exit code.
 componly: Boolean indicating whether execution of the test should be skipped.
 	By default, each test is run after having being compiled. If this tag is
 	set to 'true', the procedure is validated after a successful
@@ -173,7 +222,7 @@ setenv: define an environment variable for the process running the Mosel
 	variable will be defined only for the corresponding system.
 	When environment variables are defined, the Mosel instance is
 	systematically restarted and terminated at the end of the run
-	(independantly of the tags 'restart' and 'newinst').
+	(independently of the tags 'restart' and 'newinst').
 
 Usage examples
 --------------
@@ -226,6 +275,6 @@ Return value
 ------------
 
 'moseltest' returns an exit code of 0 when all tests have been passed.
-Otherwise, a non-zero value is returned and the file 'report.txt' is
+Otherwise, a non-zero value is returned and by default a report is
 generated including output and error streams of all tests that have 
 failed.

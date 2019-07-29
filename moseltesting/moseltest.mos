@@ -10,9 +10,9 @@
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
- 
+
        http://www.apache.org/licenses/LICENSE-2.0
- 
+
     Unless required by applicable law or agreed to in writing, software
     distributed under the License is distributed on an "AS IS" BASIS,
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,7 @@
 
 *******************************************************!)
 model moseltest
-version 0.1.0
+version 0.2.0
 uses 'mmsystem','mmjobs'
 
 parameters
@@ -41,12 +41,16 @@ parameters
  VALGRIND=false     ! Run tests with valgrind
  KEEPENV=false      ! Keep Mosel related environment variables
  LINELEN=80         ! Length of a line in the report
+ TC=false           ! Switch to Teamcity messaging
+ TCMAXLOG=60000     ! Maximum length of a log file for Teamcity (characters)
+ SAVELOGS=false     ! Keep example log even when successful
 end-parameters
 
 declarations
  OPTTYPES:array(OPTNAMES:set of string) of string
  Allfiles:list of text
  MOPT:dynamic array(set of string) of text
+ reason,tcdur:text
  minst:Mosel
  mdr:Model
  nbfail:integer
@@ -72,7 +76,7 @@ declarations
 end-declarations
 
 ! Prototypes
-forward function processtest(f:text,ft:integer,opts:array(string) of text):boolean
+forward function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
 forward procedure startinstance
 forward procedure endinstance(discon:boolean)
 forward function execmos(torun:text,parms:text):integer
@@ -85,14 +89,14 @@ forward procedure getopts(f:text,opts:array(set of string) of text)
 forward procedure defsetenv
 forward procedure updenv(env:text,spe:set of string)
 forward function expenv(ev:text):text
-forward function toskip(opts:array(set of string) of text):boolean
+forward function toskip(opts:array(set of string) of text,why:text):boolean
 forward function splicfgline(line:text,val:text):string
 forward function filexists(f:text):boolean
-forward function findpattern(rpat:text,f:text):boolean
+forward function findpattern(rpat:text,f:text,rtl:list of integer):boolean
 forward function splitlist(t:text,sc:integer):list of text
 forward function splitlist(t:text):list of text
 forward function splitset(t:text):set of string
-forward procedure reportfailure(f:text)
+forward procedure savelogs(f:text,tcl:text)
 forward procedure setsysdep
 forward function safeload(m:Model,bf:string):boolean
 forward function safecompile(opts:string,src:string,dst:string):integer
@@ -100,6 +104,10 @@ forward procedure startxsrv
 forward procedure stopxsrv
 forward function domake(f:text):boolean
 forward function dorun(f:text):boolean
+
+forward function tc_fixpath(p:text):text
+forward procedure tc_quote(t:text)
+forward function tc_getfile(f:string):text
 
 ! Known options (types: txt,int,boo,dbl,lst,lns):
 ! option lst: same as 'txt' but can appear several times (concatenated)
@@ -111,6 +119,7 @@ forward function dorun(f:text):boolean
  OPTTYPES("compstat"):="int"	! expected compilation status (default=0)
  OPTTYPES("componly"):="boo"	! if true: compile only, no execution
  OPTTYPES("runstat"):="int"	! expected run status (default=0)
+ OPTTYPES("exitcode"):="int"	! expected exit code (default=0)
  OPTTYPES("restart"):="boo"	! if true: restart instance after this test
  OPTTYPES("newinst"):="boo"	! if true: start a new instance for this test
  OPTTYPES("build"):="lst"	! list of packages/modules to build
@@ -155,20 +164,32 @@ forward function dorun(f:text):boolean
  end-if
  defsetenv
 
- writeln("Moseltest v", getparam("model_version"))
- writeln("Running Mosel v", getparam("parser_version"), " on `", syshost,
-         "' (", sysname, " ", sysarch, "bit)")
- writeln("Tests from ", SRCDIR)
+ if TC then
+  writeln("##teamcity[testSuiteStarted name='moseltest-",tc_fixpath(SRCDIR),"']")
+ else
+  writeln("Moseltest v",getparam("model_version"))
+  writeln("Running Mosel v",getparam("parser_version")," on `",syshost,
+         "' (",sysname," ",sysarch,"bit)")
+  writeln("Tests from ",SRCDIR)
+ end-if
  startxsrv
- writeln("-- Starting testing procedure --")
+
+ if not TC then
+  writeln("-- Starting testing procedure --")
+ end-if
  sttime:=gettime
  forall(f in Allfiles) do
   cleardir(WKDIR,false)
-  write(" + ", f, ": ");
-  if f.size+3+2<tplen then
-   write(" "*(tplen-3-2-f.size))
+  if TC then
+   tclabel:=text("name='")+tc_fixpath(f)+"'"
+   writeln("##teamcity[testStarted ",tclabel,"]")
+  else
+   write(" + ",f,": ");
+   if f.size+3+2<tplen then
+    write(" "*(tplen-3-2-f.size))
+   end-if
+   fflush
   end-if
-  fflush
   if endswith(f,".mos") then
    fcopy(srcdir+'/'+f,WKDIR)
    totest:=pathsplit(SYS_FNAME,f)
@@ -194,64 +215,106 @@ forward function dorun(f:text):boolean
    copydir(srcdir+'/'+f,WKDIR)
    ftype:=findmain(WKDIR,totest)
   else
-   writeln("Unexpected file extention for file ", f, "!!!")
+   if TC then
+    writeln("##teamcity[testFailed ",tclabel," message='Unexpected file extention']")
+    writeln("##teamcity[testFinished ",tclabel,"]")
+   else
+    writeln("Unexpected file extention for file ",f,"!!!")
+   end-if
    nbfail+=1
    next
   end-if
 
   if totest.size<1 then
-   writeln("Main file was not found in ", f, "!!!")
+   if TC then
+    writeln("##teamcity[testFailed ",tclabel," message='Main file was not found']")
+    writeln("##teamcity[testFinished ",tclabel,"]")
+   else
+    writeln("Main file was not found in ",f,"!!!")
+   end-if
    nbfail+=1
    next
   end-if
 
   getopts(totest,MOPT)
 
-  if toskip(MOPT) then
-   writeln("Skipped")
+  tcdur:=""
+  if toskip(MOPT,reason) then
+   if TC then
+    writeln("##teamcity[testIgnored ",tclabel," message='",reason,"']")
+   else
+    writeln("Skipped (",reason,")")
+   end-if
    nbskipped+=1
-  elif processtest(totest,ftype,MOPT) then
+  elif processtest(totest,ftype,MOPT,reason) then
    nbfail+=1
-   reportfailure(f)
+   savelogs(f,tclabel)
+   if TC then
+    writeln("##teamcity[testFailed ",tclabel," message='",reason,"']")
+   else
+    writeln(reason,"!!!")
+   end-if
+  elif TC then
+   if startswith(reason,"Skip") then
+    writeln("##teamcity[testIgnored ",tclabel," message='because of \"runbefore\"']")
+   else
+    tcdur:=text(" duration='")+reason+"'"
+   end-if
+   if SAVELOGS then savelogs(f,tclabel); end-if
+  else
+   writeln(reason)
+   if SAVELOGS then savelogs(f,tclabel); end-if
+  end-if
+
+  if TC then
+   writeln("##teamcity[testFinished ",tclabel,tcdur,"]")
   end-if
  end-do
 
- writeln("-- End of testing procedure --")
- writeln("Total time: ", gettime-sttime, "s")
+ if not TC then
+  writeln("-- End of testing procedure --")
+  writeln("Total time: ",gettime-sttime,"s")
+ end-if
 
  disconnect(minst)
  stopxsrv
  if KEEPDIR and Allfiles.size=1 then
-  writeln("Warning: directories '", WKDIR, "' and '", DSODIR, "' are not deleted")
+  writeln("Warning: directories '",WKDIR,"' and '",DSODIR,"' are not deleted")
  else
   cleardir(WKDIR,true)
   cleardir(DSODIR,true)
  end-if
 
- if nbskipped=Allfiles.size then
-  writeln("No test run over ",Allfiles.size)
- elif Allfiles.size-nbskipped>1 then
-  writeln(Allfiles.size-nbskipped, " tests were run over a total of ", Allfiles.size)
+ if TC then
+  writeln("##teamcity[testSuiteFinished name='moseltest-",tc_fixpath(SRCDIR),"']")
  else
-  writeln(Allfiles.size-nbskipped, " test was run over a total of ", Allfiles.size)
- end-if
- if nbfail=1 then
-  writeln("1 test failed. See '", repfile, "' for further details.")
-  exit(1)
- elif nbfail>1 then
-  writeln(nbfail," tests failed. See '", repfile, "' for further details.")
-  exit(1)
+  if nbskipped=Allfiles.size then
+   writeln("No test run over ",Allfiles.size)
+  elif Allfiles.size-nbskipped>1 then
+   writeln(Allfiles.size-nbskipped," tests were run over a total of ",Allfiles.size)
+  else
+   writeln(Allfiles.size-nbskipped," test was run over a total of ",Allfiles.size)
+  end-if
+  if nbfail=1 then
+   writeln("1 test failed. See '",repfile,"' for further details.")
+   exit(1)
+  elif nbfail>1 then
+   writeln(nbfail," tests failed. See '",repfile,"' for further details.")
+   exit(1)
+  end-if
  end-if
 
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 !******************
 !* Process a test
 !******************
-function processtest(f:text, ft:integer, opts:array(string) of text):boolean
+function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
  declarations
   specenv:set of string
+  rtl:list of integer
  end-declarations
 
+ fflush
  updenv(opts("setenv"),specenv)
  if opts("newinst")="true" and specenv.size<1 then
   endinstance(true)
@@ -260,13 +323,13 @@ function processtest(f:text, ft:integer, opts:array(string) of text):boolean
 
  rbf:=execmos(opts("runbefore"),"")
  if rbf=2 then
-  writeln("Skipped (runbefore)")
+  msg:="Skipped (runbefore)"
   nbskipped+=1
  elif rbf<>0 then
-  writeln("Failed to run the 'runbefore' model!!!")
+  msg:="Failed to run the 'runbefore' model"
   returned:=true
  elif dobuild(opts("build")) then
-   writeln("Failed to process the build list!!!")
+   msg:="Failed to process the build list ("+opts("build")+")"
    returned:=true
  else
   tstart:=gettime
@@ -275,25 +338,28 @@ function processtest(f:text, ft:integer, opts:array(string) of text):boolean
    c:=safecompile("g",string(f),bimfile)
    expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
    if c<>expstat then
-    writeln("Compilation failed!!!")
+    msg:="Compilation failed"
     returned:=true
    elif c=0 then
     if opts("componly")<>"true" and opts("package")="" then
      if(safeload(mdr,bimfile)) then
-      writeln("Failed to load bimfile!!!")
+      msg:="Failed to load bimfile"
       returned:=true
      else
       run(mdr)
       waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
       if waitexpired then
-       write("(killed) ")
+       if not TC then
+        write("(killed) "); fflush
+       end-if
        stop(mdr)
        waitfor(EVENT_END,-1,WAIT_EXACT)
       end-if
       dropnextevent
       expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
-      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>0 then
-       writeln("Execution error!!!")
+      expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
+      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
+       msg:="Execution error"
        returned:=true
       end-if
       unload(mdr)
@@ -307,7 +373,7 @@ function processtest(f:text, ft:integer, opts:array(string) of text):boolean
    if opts("module")<>"" then
     execfile:=string(copytext(f,1,f.size-2)+".dso")
     if domake(execfile) then
-     writeln("Compilation failed!!!")
+     msg:="Compilation failed"
      returned:=true
     else
      fcopy(WKDIR+"/"+execfile,DSODIR+"/"+opts("module"))
@@ -315,48 +381,52 @@ function processtest(f:text, ft:integer, opts:array(string) of text):boolean
    else
     execfile:=string(copytext(f,1,f.size-2)+if(sysname="windows",".exe",""))
     if domake(execfile) then
-     writeln("Compilation failed!!!")
+     msg:="Compilation failed"
      returned:=true
     elif dorun(execfile) then
-     writeln("Execution error!!!")
+     msg:="Execution error"
      returned:=true
     end-if
    end-if
   elif ft=2 then				! Java file
    execfile:=string(copytext(f,1,f.size-5)+".class")
    if domake(execfile) then
-    writeln("Compilation failed!!!")
+    msg:="Compilation failed"
     returned:=true
    elif dorun(execfile) then
-    writeln("Execution error!!!")
+    msg:="Execution error"
     returned:=true
    end-if
   else
-   writeln("Unknown file format!")
+   msg:="Unknown file format"
    returned:=true
   end-if
 
   if minst.status<>0 then
-   writeln("Mosel crashed!!!")
+   msg:="Mosel crashed"
    returned:=true
   end-if
 
   if not returned and execmos(opts("runafter"),"")<>0 then
-   writeln("Failed to run the 'runafter' model!!!")
+   msg:="Failed to run the 'runafter' model"
    returned:=true
   end-if
 
-  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT) then
-   writeln("Failed to validate 'outexpect'!!!")
+  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtl) then
+   msg:=text("Failed to validate 'outexpect' (#")+rtl(1)+")"
    returned:=true
   end-if
-  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR) then
-   writeln("Failed to validate 'errexpect'!!!")
+  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtl) then
+   msg:=text("Failed to validate 'errexpect' (#")+rtl(1)+")"
    returned:=true
   end-if
 
   if not returned then
-   writeln("Done in ",gettime-tstart,"s")
+   if TC then
+    msg:=formattext("%.0f",(gettime-tstart)*1000)
+   else
+    msg:=formattext("Done in %.3fs",gettime-tstart)
+   end-if
   end-if
  end-if
 
@@ -377,8 +447,8 @@ end-function
 procedure startinstance
  if minst.status<>0 then
   valgrind:=if(VALGRIND,'valgrind ','')
-  if connect(minst, 'rcmd:'+valgrind+'mosel -r -d "'+expandpath(WKDIR)+ 
-                                    '" -dp "'+env_dsopath+'"')<>0  then
+  if connect(minst,'rcmd:'+valgrind+'mosel -r -d "'+expandpath(WKDIR)+
+                                   '" -dp "'+env_dsopath+'"')<>0  then
    writeln("Fatal error: failed to start Mosel instance")
    exit(2)
   end-if
@@ -407,7 +477,7 @@ end-procedure
 !***********************************
 !* Execute a model on the instance
 !***********************************
-function execmos(torun:text, parms:text):integer
+function execmos(torun:text,parms:text):integer
  if torun<>"" then
   if safecompile("g",string(torun),"tmp:bimfile")<>0 or
      safeload(mdr,"tmp:bimfile") then
@@ -416,7 +486,7 @@ function execmos(torun:text, parms:text):integer
    run(mdr,parms)
    waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
    if waitexpired then
-    write("(killed) ")
+    write("(killed) "); fflush
     stop(mdr)
     waitfor(EVENT_END,-1,WAIT_EXACT)
    end-if
@@ -443,8 +513,8 @@ function dobuild(tobuild:text):boolean
   lsb:=splitlist(tobuild)
   forall(td in lsb) do
    if endswith(td,".bim") then
-    if safecompile("g", string(copytext(td,1,td.size-4)+".mos"),
-                                                 string(td))<>0 then
+    if safecompile("g",string(copytext(td,1,td.size-4)+".mos"),
+                                                string(td))<>0 then
      returned:=true
      break
     end-if
@@ -476,13 +546,13 @@ function gettotest(path:text):list of text
   f:=pathsplit(SYS_FNAME,path,path)
   returned:=[f]
  else
-  findfiles(SYS_RECURS+SYS_NODIR, lsf, path, "*.mos|*.zip|*.tar|*.tgz|*.tar.gz")
+  findfiles(SYS_RECURS+SYS_NODIR,lsf,path,"*.mos|*.c|*.java|*.zip|*.tar|*.tgz|*.tar.gz")
   forall(l in lsf)
    if and(pat in allexcludepat) not pathmatch(l,pat) then
     returned+=[l]
    end-if
   lsf:=[]
-  findfiles(SYS_RECURS+SYS_DIRONLY, lsf, path, "*.dir")
+  findfiles(SYS_RECURS+SYS_DIRONLY,lsf,path,"*.dir")
   forall(l in lsf)
    if and(pat in excludepat) not pathmatch(l,pat) then
     returned+=[l]
@@ -502,7 +572,7 @@ procedure cleardir(p:text,rmd:boolean)
 
  if minst.status=0 then
   ! If we have built modules, unload them before cleanup
-  findfiles(SYS_NODIR+SYS_NOSORT, lsf, p, "*.dso")
+  findfiles(SYS_NODIR+SYS_NOSORT,lsf,p,"*.dso")
   if lsf.size>0 then
    ! 'flushdso' available in Mosel 3.13.1 and newer
    setparam("ioctrl",true)
@@ -523,11 +593,11 @@ procedure cleardir(p:text,rmd:boolean)
   forall(i in 0..120) do
    if i>0 then sleep(500); end-if
    lsf:=[]
-   findfiles(SYS_RECURS+SYS_NODIR+SYS_NOSORT, lsf, p, "*")
+   findfiles(SYS_RECURS+SYS_NODIR+SYS_NOSORT,lsf,p,"*")
    if getsize(lsf)=0 then allgone:=true; break; end-if
   end-do
   if not allgone then
-   writeln("Unable to remove all files from ", p, ", remaining files: ", lsf)
+   writeln("Unable to remove all files from ",p,", remaining files: ",lsf)
   end-if
  end-if
  if rmd then
@@ -538,14 +608,14 @@ end-procedure
 !*************************
 !* Copy a directory tree
 !*************************
-procedure copydir(src:text, dst:string)
+procedure copydir(src:text,dst:string)
  declarations
   lsf:list of text
  end-declarations
- findfiles(SYS_RECURS, lsf, src, "*")
+ findfiles(SYS_RECURS,lsf,src,"*")
  if lsf.size>0 then
-  newtar(0, "tmp:ttar", src, lsf)
-  untar("tmp:ttar", dst)
+  newtar(0,"tmp:ttar",src,lsf)
+  untar("tmp:ttar",dst)
   fdelete("tmp:ttar")
  end-if
 end-procedure
@@ -553,7 +623,7 @@ end-procedure
 !**************************************
 !* Find the "main" file in a directory
 !**************************************
-function findmain(path:text, totest:text):integer
+function findmain(path:text,totest:text):integer
  declarations
   lsf:list of text
  end-declarations
@@ -561,10 +631,10 @@ function findmain(path:text, totest:text):integer
  totest:=""
  returned:=-1
 
- findfiles(SYS_NODIR, lsf, path, "main.mos|main.c|Main.java|main.java")
+ findfiles(SYS_NODIR,lsf,path,"main.mos|main.c|Main.java|main.java")
  if lsf.size<>1 then
   lsf:=[]
-  findfiles(SYS_NODIR, lsf, path, "*.mos|*.c|*.java")
+  findfiles(SYS_NODIR,lsf,path,"*.mos|*.c|*.java")
  end-if
 
  if lsf.size=1 then
@@ -580,7 +650,7 @@ end-function
 !***********************************
 !* Process options of a source file
 !***********************************
-procedure getopts(f:text, opts:array(set of string) of text)
+procedure getopts(f:text,opts:array(set of string) of text)
  declarations
   line,val:text
   parm:string
@@ -604,8 +674,8 @@ procedure getopts(f:text, opts:array(set of string) of text)
      opts(parm):=val
     end-if
    else
-    writeln("   Warning: option `", if(parm.size>0,text(parm),line),
-            "' ignored (file ", f, ")")
+    writeln("   Warning: option `",if(parm.size>0,text(parm),line),
+            "' ignored (file ",f,")")
    end-if
   end-if
  end-do
@@ -625,7 +695,7 @@ end-procedure
 !**********************************
 !* Update environment is requested
 !**********************************
-procedure updenv(env:text, spe:set of string)
+procedure updenv(env:text,spe:set of string)
  declarations
   mp:array(0..3) of textarea
   lp:list of text
@@ -638,21 +708,21 @@ procedure updenv(env:text, spe:set of string)
    esys:=copytext(e,mp(1))
    if esys<>sysname and esys<>sysname+sysarch then
     if endswith(esys,"32") or endswith(esys,"64") then
-     deltext(esys, esys.size-1, esys.size)
+     deltext(esys,esys.size-1,esys.size)
     end-if
     if string(esys) not in KNOWNSYSNAMES then
-     writeln("Warning: option `setenv ", e, "' ignored (unknown system name)")
+     writeln("Warning: option `setenv ",e,"' ignored (unknown system name)")
     end-if
     next
    else
     ename:=copytext(e,mp(2))
     eval:=copytext(e,mp(3))
    end-if
-  elif regmatch(e, '^([A-Za-z0-9_]+) *=(.*)', 1, REG_EXTENDED, mp) then
+  elif regmatch(e,'^([A-Za-z0-9_]+) *=(.*)',1,REG_EXTENDED,mp) then
    ename:=copytext(e,mp(1))
    eval:=copytext(e,mp(2))
   else
-   writeln("Warning: option `setenv ", e, "' ignored (syntax error)")
+   writeln("Warning: option `setenv ",e,"' ignored (syntax error)")
    next
   end-if
   spe+={string(ename)}
@@ -674,11 +744,11 @@ function expenv(ev:text):text
  end-declarations
 
  returned:=ev
- while(regmatch(returned, '\${\([A-Za-z_][A-Za-z0-9_]*\)}', 1, 0, mp)) do
+ while(regmatch(returned,'\${\([A-Za-z_][A-Za-z0-9_]*\)}',1,0,mp)) do
   eval:=getenv(copytext(returned,mp(1)))
   deltext(returned,mp(0))
   if eval.size>0 then
-   inserttext(returned, eval, mp(0).start)
+   inserttext(returned,eval,mp(0).start)
   end-if
  end-do
 end-function
@@ -686,31 +756,36 @@ end-function
 !*****************************************
 !* Check whether a test should be skipped
 !*****************************************
-function toskip(opts:array(set of string) of text):boolean
+function toskip(opts:array(set of string) of text,why:text):boolean
  if opts("skip")="true" then
+  why:="disabled"
   returned:=true
  else
   if opts("skip_host")<>"" then
    lsn:=splitset(opts("skip_host"))
    if syshost in lsn then
+    why:="on this host"
     returned:=true
    end-if
   end-if
   if opts("skip_sys")<>"" then
    lsn:=splitset(opts("skip_sys"))
    if sysname in lsn or sysname+sysarch in lsn then
+    why:="on this system"
     returned:=true
    end-if
   end-if
   if opts("only_host")<>"" then
    lsn:=splitset(opts("only_host"))
    if syshost not in lsn then
+    why:="on this host"
     returned:=true
    end-if
   end-if
   if opts("only_sys")<>"" then
    lsn:=splitset(opts("only_sys"))
    if sysname not in lsn and sysname+sysarch not in lsn then
+    why:="on this system"
     returned:=true
    end-if
   end-if
@@ -727,7 +802,7 @@ function splicfgline(line:text,val:text):string
   dv:real
  end-declarations
  trim(line)
- if regmatch(line, '^\([a-zA-Z0-9_]*\) *[ :=] *\(.*\)', 1, 0, mp) then
+ if regmatch(line,'^\([a-zA-Z0-9_]*\) *[ :=] *\(.*\)',1,0,mp) then
   returned:=string(copytext(line,mp(1)))
   val:=copytext(line,mp(2))
   trim(val)
@@ -755,7 +830,7 @@ function splicfgline(line:text,val:text):string
    end-case
   end-if
  ! Special case of a Boolean tag (only the name of the tag for 'true')
- elif regmatch(line, '^\([a-zA-Z0-9_]*\)$', 1, 0, mp) then
+ elif regmatch(line,'^\([a-zA-Z0-9_]*\)$',1,0,mp) then
   returned:=string(copytext(line,mp(1)))
   if returned in OPTNAMES and OPTTYPES(returned)='boo' then
    val:="true"
@@ -780,33 +855,38 @@ end-function
 !************************************
 !* Look for a pattern in a log file
 !************************************
-function findpattern(rpat:text,f:text):boolean
+function findpattern(rpat:text,f:text,rtl:list of integer):boolean
  declarations
   mp:array(0..0) of textarea
   line:text
   lp:list of text
+  cnt:integer
  end-declarations
 
  if rpat<>"" then
   if not filexists(f) then
    returned:=true
+   rtl:=[0]
   else
    lp:=splitlist(rpat,10)
    p:=string(lp.first)
    fopen(f,F_INPUT)
    returned:=true
+   cnt:=1
    while(readtextline(line)>=0) do
-    if regmatch(line, p, 1, REG_EXTENDED, mp) then
+    if regmatch(line,p,1,REG_EXTENDED,mp) then
      cuthead(lp,1)
      if lp.size=0 then
       returned:=false
       break
      else
       p:=string(lp.first)
+      cnt+=1
      end-if
     end-if
    end-do
    fclose(F_INPUT)
+   rtl:=[cnt]
   end-if
  end-if
 end-function
@@ -814,12 +894,15 @@ end-function
 !****************************************************
 !* Split a list of names (with choice of separator)
 !****************************************************
-function splitlist(t:text, sc:integer):list of text
+function splitlist(t:text,sc:integer):list of text
  declarations
   pctx:parsectx
  end-declarations
 
  pctx.sepchar:=sc
+ if sc=10 then  ! no quoting when splitting full lines
+  pctx.qtype:=-1
+ end-if
  while(nextfield(t,pctx)) do
   returned+=[parsetext(t,pctx)]
  end-do
@@ -846,23 +929,31 @@ function splitset(t:text):set of string
  end-do
 end-function
 
-!********************************
-!* Record failure in the report
-!********************************
-procedure reportfailure(f:text)
+!******************
+!* Save log files
+!******************
+procedure savelogs(f:text,tcl:text)
+ if TC then
+  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+   writeln("##teamcity[testStdOut ",tcl," out='",tc_getfile(WKDIR+"/"+OUT),"']")
+  end-if
+  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+   writeln("##teamcity[testStdErr ",tcl," out='",tc_getfile(WKDIR+"/"+ERR),"']")
+  end-if
+ end-if
  fopen(repfile,F_OUTPUT+F_APPEND)
  writeln("+"*78)
  writeln("="*(77-f.size)," ",f)
  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
-  writeln("==== ", "output", " ====")
+  writeln("==== ","output"," ====")
  end-if
  fclose(F_OUTPUT)
- fcopy(WKDIR+"/"+OUT, F_SILENT, repfile, F_APPEND)
+ fcopy(WKDIR+"/"+OUT,F_SILENT,repfile,F_APPEND)
  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
   fopen(repfile,F_OUTPUT+F_APPEND)
-  writeln("==== ", "error", " ====")
+  writeln("==== ","error"," ====")
   fclose(F_OUTPUT)
-  fcopy(WKDIR+"/"+ERR, F_SILENT, repfile, F_APPEND)
+  fcopy(WKDIR+"/"+ERR,F_SILENT,repfile,F_APPEND)
  end-if
 end-procedure
 
@@ -877,7 +968,9 @@ procedure setsysdep
  if sysname="windows" then
    ! use nmake if it is available
    fopen("null:",F_OUTPUT)
+   fopen("null:",F_ERROR)
    system("nmake /nologo /?")
+   fclose(F_ERROR)
    fclose(F_OUTPUT)
    usenmake := getsysstat = 0
    if not usenmake then
@@ -982,7 +1075,7 @@ end-procedure
 !************************************
 !* Load a model on 'minst' "safely"
 !************************************
-function safeload(m:Model, bf:string):boolean
+function safeload(m:Model,bf:string):boolean
  setparam("ioctrl",true)
   load(minst,m,bf)
  setparam("ioctrl",false)
@@ -992,9 +1085,9 @@ end-function
 !***************************************
 !* Compile a model on 'minst' "safely"
 !***************************************
-function safecompile(opts:string, src:string, dst:string):integer
+function safecompile(opts:string,src:string,dst:string):integer
  setparam("ioctrl",true)
-  returned:=compile(minst, opts, src, dst)
+  returned:=compile(minst,opts,src,dst)
  setparam("ioctrl",false)
  dummy:=getparam("iostatus")
 end-function
@@ -1008,17 +1101,17 @@ procedure startxsrv
  end-declarations
 
  if PIDFILE<>"" then
-  fopen("null:", F_ERROR)
-  c:=connect(inst, "127.0.0.1")
+  fopen("null:",F_ERROR)
+  c:=connect(inst,"127.0.0.1")
   fclose(F_ERROR)
   if c=0 then
    disconnect(inst)
    writeln("Warning: using an existing xprmsrv server - remote tests may fail")
   else
-   fopen("tmp:xcfg", F_OUTPUT)
-   writeln("XPRMSRV_ACCESS=127.0.0.1 ", getsysinfo(SYS_NODE))
+   fopen("tmp:xcfg",F_OUTPUT)
+   writeln("XPRMSRV_ACCESS=127.0.0.1 ",getsysinfo(SYS_NODE))
    writeln("[xpress]")
-   writeln("MOSEL_CWD=", expandpath(WKDIR))
+   writeln("MOSEL_CWD=",expandpath(WKDIR))
    fclose(F_OUTPUT)
    system("xprmsrv -d -pf "+PIDFILE+" "+expandpath("tmp:xcfg"))
    writeln("xprmsrv server started")
@@ -1040,7 +1133,7 @@ procedure stopxsrv
     fdelete(PIDFILE)
     writeln("xprmsrv server stopped")
    else
-    writeln("Warning: failed to kill xprmsrv server (pid:", tfile, ")")
+    writeln("Warning: failed to kill xprmsrv server (pid:",tfile,")")
    end-if
   else
    system("kill "+tfile)
@@ -1104,4 +1197,45 @@ DOMAKE`)
  returned:=execmos("rmt:tmp:dorun.mos","TODO='"+todo+"'")<>0
 end-function
 
+!*****************************************************
+!* Make sure a path uses '/' for directory separation
+!*****************************************************
+function tc_fixpath(p:text):text
+ returned:=p
+ asproc(regreplace(returned,'\\','/'))
+end-function
+
+!*********************************
+!* Quote a text string for TC
+!*********************************
+procedure tc_quote(t:text)
+ asproc(regreplace(t,"[][|']",'|\0'))
+ asproc(regreplace(t,"\n","|n"))
+ asproc(regreplace(t,"\r",""))      ! from Windows (useless)
+end-procedure
+
+!*************************************
+!* Generate a TC string from a file
+!*************************************
+function tc_getfile(f:string):text
+ declarations
+  l:text
+ end-declarations
+ fopen(f,F_INPUT)
+ while(readtextline(l)>0) do
+  tc_quote(l)
+  returned+=l
+ end-do
+ if TCMAXLOG>0 and returned.size>TCMAXLOG then
+  sp:=findtext(returned,"|n",returned.size-TCMAXLOG)
+  if sp>0 and sp+2<returned.size then
+   sp+=2
+  else
+   sp:=returned.size-TCMAXLOG
+  end-if
+  deltext(returned,1,sp)
+  returned:="...|n"+returned
+ end-if
+ fclose(F_INPUT)
+end-function
 end-model
