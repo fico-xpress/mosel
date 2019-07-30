@@ -31,7 +31,7 @@ directory structure is accepted (i.e. all subdirectories are traversed
 and files are processed in alphabetical order).
 
 ## Documentation
-See the file [readme.txt](readme.txt) or the [PDF documentation](moseltesting.pdf) for the full documentation of this program.
+See the [documentation in text format](moseltestdoc.txt) or the [PDF documentation](moseltesting.pdf) for the full documentation of this program.
 
 ## Legal
 
