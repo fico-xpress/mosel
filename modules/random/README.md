@@ -38,3 +38,12 @@ Make sure the file `random.dso` is on the DSO search path (either in the *dso* s
 Run the provided test model *[random_test.mos](random_test.mos)*:
 * from the command line: `mosel random_test`
 * with Xpress Workbench: open the file `random_test.mos` in the Workbench workspace and select `Run random_test.mos` from the workspace menu
+
+## Legal
+
+See source code files for copyright notices.
+
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../../LICENSE) for the full license text.
+

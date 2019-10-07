@@ -37,3 +37,8 @@ See the [documentation in text format](moseltestdoc.txt) or the [PDF documentati
 
 See source code files for copyright notices.
 
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../LICENSE) for the full license text.
+
+

@@ -1,0 +1,106 @@
+(!******************************************************
+  file inisat_test.mos
+  ````````````````````
+  Testing minisat:
+  * Problem statement, solving and solution retrieval
+  * Repeatedly re-solving modified problems
+    
+  author: T. Berthold, Z. Csizmadia
+
+  (c) Copyright 2019 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "Testing minisat"
+ uses "minisat"
+ options keepassert
+
+ parameters
+  N = 5                          ! Random value to demonstrate a loop
+ end-parameters
+
+ declarations
+   C : set of set of logical     ! This will be our set of clauses
+   x,y,z,a,b,c: logical          ! Individual logical/Boolean variables
+   ELEMS = 1..N                  ! Set serving as index for array of logicals
+   vars: array(ELEMS) of logical ! Array of N logicals
+ end-declarations
+
+!**** Subroutine to solve a problem + display solution status info ****
+ function solve_and_report(C: set of set of logical) :integer
+   writeln("Clauses:", C)        ! Display the set of clauses
+
+  ! Solve the SAT problem
+   returned := solve(C)
+
+  ! Report the result
+   if returned = 0 then
+     writeln("The problem is satisfiable")
+   elif returned = 1 then
+     writeln("The problem is unsatisfiable")
+   else
+     writeln("The problem has been interrupted")
+   end-if
+ end-function
+
+
+! Create individual sets of three clauses (of length 2 or 1) and 
+! two clauses of length three and join them
+ clauses_1 := {{x,y}, {y,z}, {not y}}
+ clauses_2 := {{a,b,c}, {not a,not b,not c}}
+ C := clauses_1+clauses_2
+
+! Small loop that puts each of the variables in the array together in a 
+! 2-clause with y, thereby forcing them to be TRUE (y must be FALSE, as of 
+! above) and adds all those two-clauses to our main set of clauses
+ forall(e in ELEMS)
+   C := C + {{vars(e),y}}
+
+! Solve the problem
+ status:=solve_and_report(C)
+ assert(status=0, "ERROR: unexpected solution status (expected 0)")
+
+! Display solution values
+ writeln( "x=", getsol(x), ", y=", getsol(y), ", z=", getsol(z) )
+ writeln( "a=", a.sol, ", b=", b.sol, ", c=", c.sol )
+
+! At least one of a,b,c must be false, at least one true
+ assert((getsol(a) or getsol(b) or getsol(c)) and 
+        ( not(getsol(a)) or not(getsol(b)) or not(getsol(c))),
+        "Incorrect solution value (a,b,c)" )
+
+! x and z must be true, y must be false
+ assert((getsol(x) and getsol(z) and not getsol(y)), 
+        "Incorrect solution value (x,y,z)")
+
+ write("vars array: ")
+ forall(e in ELEMS) do
+   write(getsol(vars(e)), ", ")
+   assert(getsol(vars(e)), "Incorrect solution value for vars index "+e)
+  end-do
+ writeln("")
+
+! Modify the problem and resolve it
+ C:= {{x,y},{y,z},{not y,x},{not y,not x},{not x,y}}
+ status := solve_and_report(C)
+
+ assert(status=1, "ERROR: unexpected solution status (expected 1)")
+
+! Delete all clauses and resolve
+ C:= {}
+ status := solve_and_report(C)
+
+ assert(status=0, "ERROR: unexpected solution status (expected 0)")
+
+end-model

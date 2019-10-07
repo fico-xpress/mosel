@@ -38,3 +38,12 @@ Running the provided test model *[masterjq.mos](test/masterjq.mos)*:
 * compile the package source file and make sure its location is configured in the enironment variable `MOSEL_BIM`
 * from the command line: `mosel masterjq`
 * with Xpress Workbench: open the file `masterjq.mos` in the Workbench workspace and select `Run masterjq.mos` from the workspace menu
+
+## Legal
+
+See source code files for copyright notices.
+
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../../LICENSE) for the full license text.
+

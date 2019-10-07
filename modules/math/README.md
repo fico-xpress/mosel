@@ -37,3 +37,11 @@ Make sure the file `math.dso` is on the DSO search path (either in the *dso* sub
 Run the provided test model *[math_test.mos](math_test.mos)*:
 * from the command line: `mosel math_test`
 * with Xpress Workbench: open the file `math_test.mos` in the Workbench workspace and select `Run math_test.mos` from the workspace menu
+
+## Legal
+
+See source code files for copyright notices.
+
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../../LICENSE) for the full license text.

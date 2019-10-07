@@ -8,3 +8,12 @@ Build options:
 *   CLEAN=true :  remove all generated files (no build takes place)
 
 > *This package can only be compiled with Mosel 5*
+
+## Legal
+
+See source code files for copyright notices.
+
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../../../LICENSE) for the full license text.
+

@@ -68,3 +68,12 @@ Make sure the file `myqxprs.dso` is on the DSO search path (either in the *dso* 
 Run the provided test master model *[run_myqxprs_tests.mos](run_myqxprs_tests.mos)*:
 * from the command line: `mosel run_myqxprs_tests`
 * with Xpress Workbench: open the file `run_myqxprs_tests.mos` in the Workbench workspace and select `Run run_myqxprs_tests.mos` from the workspace *Run* menu
+
+## Legal
+
+See source code files for copyright notices.
+
+## License
+
+The components in this repository are licensed under the Apache License, Version 2.0. See [LICENSE](../../LICENSE) for the full license text.
+
