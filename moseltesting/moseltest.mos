@@ -21,7 +21,7 @@
 
 *******************************************************!)
 model moseltest
-version 0.2.0
+version 0.2.1
 uses 'mmsystem','mmjobs'
 
 parameters
@@ -943,7 +943,7 @@ procedure savelogs(f:text,tcl:text)
  end-if
  fopen(repfile,F_OUTPUT+F_APPEND)
  writeln("+"*78)
- writeln("="*(77-f.size)," ",f)
+ writeln(if(f.size<77,"="*(77-f.size),text("=="))," ",f)
  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
   writeln("==== ","output"," ====")
  end-if
