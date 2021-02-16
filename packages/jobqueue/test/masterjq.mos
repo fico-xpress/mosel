@@ -5,17 +5,17 @@
    file masterjq.mos
    `````````````````
    Master file for testing jobqueue functionality
-   
-   author: B. Hafizoglu, May 2018, rev. S. Heipcke Feb. 2019 
+
+   author: B. Hafizoglu, May 2018, rev. S. Heipcke Feb. 2019
 
    (c) Copyright 2018 Fair Isaac Corporation
-  
+
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
- 
+
        http://www.apache.org/licenses/LICENSE-2.0
- 
+
     Unless required by applicable law or agreed to in writing, software
     distributed under the License is distributed on an "AS IS" BASIS,
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -25,7 +25,7 @@
 *******************************************************!)
 
 model "Jobqueue Package Example"
- options noimplicit;  	
+ options noimplicit;
  version 0.0.1
 
  uses "mmsystem", "mmjobs"
@@ -43,7 +43,8 @@ model "Jobqueue Package Example"
    rts, status, code: integer
    tasks: list of integer
    mpar: text
- end-declarations 
+   starttime,endtime: datetime
+ end-declarations
 
  setparam("JQ_VERBOSE", 10)
 
@@ -62,9 +63,9 @@ model "Jobqueue Package Example"
 
 ! if compile("simple.mos")<>0 then exit(1);  end-if
 ! jobinit(job,"simple.bim")          ! Model is already compiled
-!!! NB: if the model is provided as BIM then the Mosel version on the remote 
-!!! machine must be compatible (generally same or more recent) with the version 
-!!! used for compiling the BIM  
+!!! NB: if the model is provided as BIM then the Mosel version on the remote
+!!! machine must be compatible (generally same or more recent) with the version
+!!! used for compiling the BIM
 
  jobinit(job,"simple.mos")
 
@@ -101,9 +102,9 @@ model "Jobqueue Package Example"
    Sol: dynamic array(range) of real
    L: list of text
    val: real
- end-declarations 
+ end-declarations
 
- ! Optional: Display output and logs of the computation tasks 
+ ! Optional: Display output and logs of the computation tasks
  forall(t in tasks) do
    initializations from taskstatfile(t)  ! Model execution status file
      status code
@@ -112,7 +113,11 @@ model "Jobqueue Package Example"
    writeln("**Host info task ", t, ":")
    fcopy(taskhostfile(t),0,"",0)         ! Host (node) information file
    if status=0 then
-     writeln("**Output of task ", t, ":")
+    initializations from taskstatfile(t)  ! Model execution status file
+     starttime as "starttime"
+     endtime as "endtime"
+    end-initializations
+     writeln("**Output of task ", t, " [executed in ",endtime-starttime,"s]:")
      fcopy(taskoutfile(t),0,"",0)        ! Output log file
    else
      writeln("**Errors of task ", t, ":")
