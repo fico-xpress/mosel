@@ -29,6 +29,7 @@
 *******************************************************!)
 model jqctrl
 uses 'mmsystem','mmjobs'
+version 0.0.2
 
 parameters
  ID="xxx"                       ! Jobqueue instance identifier

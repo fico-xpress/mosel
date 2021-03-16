@@ -26,7 +26,7 @@
 
 model "Jobqueue Package Example"
  options noimplicit;
- version 0.0.1
+ version 0.0.2
 
  uses "mmsystem", "mmjobs"
  uses "jobqueue"
@@ -43,7 +43,7 @@ model "Jobqueue Package Example"
    rts, status, code: integer
    tasks: list of integer
    mpar: text
-   starttime,endtime: datetime
+   starttime, endtime: datetime
  end-declarations
 
  setparam("JQ_VERBOSE", 10)
@@ -94,7 +94,7 @@ model "Jobqueue Package Example"
  writeln("**Queueinfo:",jqi)
 
 
- ! **** 4. Wait for termination ****
+! **** 4. Wait for termination ****
  rts:=queuewait(queue)
  writeln("**End of wait: ",rts)
 
@@ -108,19 +108,16 @@ model "Jobqueue Package Example"
  forall(t in tasks) do
    initializations from taskstatfile(t)  ! Model execution status file
      status code
+     starttime endtime
    end-initializations
    writeln("**Status of task ", t, ": ", status, "/", code)
    writeln("**Host info task ", t, ":")
    fcopy(taskhostfile(t),0,"",0)         ! Host (node) information file
    if status=0 then
-    initializations from taskstatfile(t)  ! Model execution status file
-     starttime as "starttime"
-     endtime as "endtime"
-    end-initializations
-     writeln("**Output of task ", t, " [executed in ",endtime-starttime,"s]:")
+     writeln("**Output of task ", t, " [executed in ", endtime-starttime, "s]:")
      fcopy(taskoutfile(t),0,"",0)        ! Output log file
    else
-     writeln("**Errors of task ", t, ":")
+     writeln("**Errors of task ", t, " [executed in ", endtime-starttime, "s]:")
      fcopy(taskerrfile(t),0,"",0)        ! Error log file
    end-if
  end-do
