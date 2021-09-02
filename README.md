@@ -6,6 +6,8 @@ A Mosel program (or model) is a text file that takes the extension `.mos`, it is
 
 Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/docs/DOC-3771) that forms part of the Xpress distribution.  
 
+See the [Mosel language cheatsheet](moselsheet.pdf) for an overview of basic language features and use of the Mosel command line.
+
 This repository contains various extension libraries for the Mosel language, either in the form of *Mosel packages* (libraries implemented in the Mosel language distributed as platform independent *BIM* files) or *Mosel modules* (libraries implemented in C following the conventions of the Mosel Native Interface, also called *DSO-dynamic shared objects*). 
 
 Each subdirectory contains the source of one library, along with building instructions and some test(s).

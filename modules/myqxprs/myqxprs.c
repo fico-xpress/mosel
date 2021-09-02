@@ -588,7 +588,7 @@ static void *slv_pb_create(XPRMcontext ctx, void *libctx, void *toref, int type)
   slpb->next=slctx->probs;
   slctx->probs->prev=slpb;
  }
- /* else we are creating the master problem */
+ /* else we are creating the main problem */
 
  slctx->probs=slpb;
  return slpb;
