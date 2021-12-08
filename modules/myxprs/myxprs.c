@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#define XPRM_NICOMPAT 5005000   /* Compatibility level: Mosel 5.5.0 */
 #include "xprm_ni.h"            /* Mosel NI header file */
 #include "xprnls.h"             /* Character encoding conversion routines */
 
@@ -440,7 +441,7 @@ static int slv_lc_setcbintsol(XPRMcontext ctx,void *libctx)
 
  if(procname!=NULL)
  {                  /* The specified entity must be a procedure */
-  if(XPRM_STR(mm->findident(ctx,procname,&result))!=XPRM_STR_PROC)
+  if(XPRM_STR(mm->findident(ctx,procname,&result,XPRM_FID_NOLOC))!=XPRM_STR_PROC)
   {
    mm->dispmsg(ctx,"myxprs: Wrong subroutine type for callback `intsol'.\n");
    return RT_ERROR;
@@ -448,6 +449,7 @@ static int slv_lc_setcbintsol(XPRMcontext ctx,void *libctx)
   do
   {                 /* The specified procedure must not have any arguments */
    mm->getprocinfo(result.proc,&partyp,&nbpar,&type);
+   type=XPRM_TYP(type);
    if((type==XPRM_TYP_NOT)&&(nbpar==0)) break;
    result.proc=mm->getnextproc(result.proc);
   } while(result.proc!=NULL);
@@ -693,6 +695,8 @@ static int slv_optim(XPRMcontext ctx,s_slvctx *slctx, int objsense,XPRMlinctr ob
       objval=0;
       result=XPRM_PBUNB;
       break;
+   default:
+      result=XPRM_PBOTH;
   }
   if(!(result&XPRM_PBSOL))
   {
