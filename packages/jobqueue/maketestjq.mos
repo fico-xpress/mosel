@@ -53,11 +53,13 @@ model "build and test jq"
   if getsysstat<>0 then
     writeln("Error building 'jobqueue' package")
     exit(4)
+  else
+    writeln("****Package 'jobqueue' build completed")
   end-if
   ! Copy the BIM into the test directory
   fcopy("jobqueue.bim", "../test")
   ! Run the test model
   setparam("workdir","../test")
-  system("mosel exe -dp . masterjq")
+  system("mosel exe -dp . mainjq")
 
 end-model

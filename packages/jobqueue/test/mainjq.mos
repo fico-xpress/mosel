@@ -2,9 +2,9 @@
    Jobqueue package testing
    ========================
 
-   file masterjq.mos
-   `````````````````
-   Master file for testing jobqueue functionality
+   file mainjq.mos
+   ```````````````
+   Main file for testing jobqueue functionality
 
    author: B. Hafizoglu, May 2018, rev. S. Heipcke Feb. 2019
 

@@ -670,7 +670,7 @@ if getfsize("shmem:ctrl_bim")<16 and
  logmsg("Failed to compile ctrl.mos")
  exit(1)
 end-if
-send(CMD_OK,0)       ! Notify master (user model) that the scheduler is ready
+send(CMD_OK,0)       ! Notify main (user model) that the scheduler is ready
 
 ! Now launch the scheduler
 waiting:=-1

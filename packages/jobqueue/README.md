@@ -23,8 +23,8 @@ Alternatively, you can choose to perform the following individual build steps:
 1. Execute *make.mos* in the subdirectory **source**:
 `mosel make`
 2. Copy the resulting file *jobqueue.bim* into the **test** subdirectory or configure its location in the enironment variable `MOSEL_BIM`
-3. Execute the test model *masterjq.mos* in the subdirectory **test** :
-`mosel masterjq`
+3. Execute the test model *mainjq.mos* in the subdirectory **test** :
+`mosel mainjq`
 
 > A recent version of Mosel (Mosel 5) is required for executing the example.
 > The remote instances may use an older version (Mosel 4), as required by the models that are to be run.
@@ -34,10 +34,10 @@ Alternatively, you can choose to perform the following individual build steps:
 
 This package is compatible with Mosel version 5.0 and more recent.
 
-Running the provided test model *[masterjq.mos](test/masterjq.mos)*:
+Running the provided test model *[mainjq.mos](test/mainjq.mos)*:
 * compile the package source file and make sure its location is configured in the enironment variable `MOSEL_BIM`
-* from the command line: `mosel masterjq`
-* with Xpress Workbench: open the file `masterjq.mos` in the Workbench workspace and select `Run masterjq.mos` from the workspace menu
+* from the command line: `mosel mainjq`
+* with Xpress Workbench: open the file `mainjq.mos` in the Workbench workspace and select `Run mainjq.mos` from the workspace menu
 
 ## Legal
 

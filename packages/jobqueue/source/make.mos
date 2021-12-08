@@ -11,7 +11,7 @@
    * jobqueue.mos (public package interface routines)
    All files are expected to be in the same location as this file.
    The result from the default build process is a single BIM file
-   for use by user (master) models.
+   for use by user models.
    
    Build options:
    DOC=true    generate online doc for the 'jobqueue' package
