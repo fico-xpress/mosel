@@ -1,12 +1,14 @@
 # FICO Xpress Mosel Open Source Repository
 
-[FICO Xpress Mosel](https://community.fico.com/docs/DOC-3787) is an analytic orchestration, algebraic modeling, and programming language. 
+[FICO Xpress Mosel](https://community.fico.com/s/fico-xpress-mosel-mathematical) is an analytic orchestration, algebraic modeling, and programming language. 
 Mosel defines a public C interface (Mosel Native Interface) that allows developers to extend the core functionality of the Mosel language according to their needs, such as the definition of data connectors, solver interfaces, or access to system functionality on the Mosel language level.
 A Mosel program (or model) is a text file that takes the extension `.mos`, it is compiled into a platform-independent `.bim` (**BI**nary **M**odel) file that is then loaded by Mosel to be run with some data instance(s). 
 
-Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/docs/DOC-3771) that forms part of the Xpress distribution.  
+Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/s/fico-xpress-workbench-product-overview) that forms part of the Xpress distribution.  
 
-See the [Mosel language cheatsheet](moselsheet.pdf) for an overview of basic language features and use of the Mosel command line.
+Syntax highlighting definitions for Mosel have been created for various editors, including [VI/gvim](https://github.com/fico-xpress/mosel-vim-plugin), [JetBrains IntelliJ Platform](https://github.com/fico-xpress/mosel-syntax-highlighting), [Notepad++](https://github.com/fico-xpress/mosel-syntax-highlighting), [Pygment](https://pygments.org/docs/lexers/#lexers-for-the-mosel-language), [UltraEdit](https://www.ultraedit.com/downloads/extras/wordfiles.html), [Rouge](http://rouge.jneen.net).
+
+See the Mosel language cheatsheet (in [A4 version](moselsheet_a4.pdf) or [2-page version](moselsheet_2pg.pdf)) for an overview of basic language features and use of the Mosel command line.
 
 This repository contains various extension libraries for the Mosel language, either in the form of *Mosel packages* (libraries implemented in the Mosel language distributed as platform independent *BIM* files) or *Mosel modules* (libraries implemented in C following the conventions of the Mosel Native Interface, also called *DSO-dynamic shared objects*). 
 
@@ -42,7 +44,7 @@ Mosel using source Mosel files, C programs or Java programs
 * Mosel model and program examples: [Examples database](http://examples.xpress.fico.com/example.pl#mosel)
 
 ## Installation
-If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](http://subscribe.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, *Shrinkwrap License Agreement, FICO Xpress Optimization Suite, FICO Xpress Insight*.  
+If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](https://content.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, *Shrinkwrap License Agreement, FICO Xpress Optimization Suite, FICO Xpress Insight*.  
 
 #### Requirements
 > Mosel modules are C programs, you need a C compiler to generate new DSO. 
