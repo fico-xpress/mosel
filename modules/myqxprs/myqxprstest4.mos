@@ -2,11 +2,11 @@
   file myqxprstest4.mos
   `````````````````````
   Testing myqxprs:
-  * defining an integer solution callback
+  * defining an integer solution callback (via subroutine reference)
     
   author: S.Heipcke, Apr. 2018
 
-  (c) Copyright 2018 Fair Isaac Corporation
+  (c) Copyright 2018-2022 Fair Isaac Corporation
   
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ model "Integer solution callback"
   fopen("tee:text:foutput&", F_OUTPUT)
 
  ! **** Definition of the callback subroutine ****
-  public procedure intsol
+  procedure intsol
     writeln("!!! New solution: ", getparam("myxp_lpobjval"))
     forall(i in RN) writeln(i, ": ", getsol(x(i)), ", ", getsol(y(i)))
   end-procedure
@@ -62,7 +62,7 @@ model "Integer solution callback"
   setparam("myxp_verbose", true) 
 
  ! Define a solver callback (invoked whenever an integer solution is found)
-  setcbintsol("intsol")
+  setcbintsol(->intsol)
 
  ! Solve the problem
   minimise(TotDist)

@@ -11,7 +11,7 @@
 
   author: Y. Colombani, S. Heipcke, 2018
 
-  (c) Copyright 2018 Fair Isaac Corporation
+  (c) Copyright 2018-2022 Fair Isaac Corporation
   
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#define XPRM_NICOMPAT 5005000   /* Compatibility level: Mosel 5.5.0 */
+#define XPRM_NICOMPAT 6000000   /* Compatibility level: Mosel 6.0.0 */
 #include "xprm_ni.h"            /* Mosel NI header file */
 #include "xprnls.h"             /* Character encoding conversion routines */
 #include "mmnl.h"               /* mmnl module extension */
@@ -58,6 +58,7 @@ static int slv_lc_getpstat(XPRMcontext ctx, void *libctx);
 static int slv_lc_maxim(XPRMcontext ctx, void *libctx);
 static int slv_lc_minim(XPRMcontext ctx, void *libctx);
 static int slv_lc_setcbintsol(XPRMcontext ctx, void *libctx);
+static int slv_lc_setcbintsol_pr(XPRMcontext ctx,void *libctx);
 static int slv_lc_writepb(XPRMcontext ctx, void *libctx);
 static int slv_lc_nmaxim(XPRMcontext ctx, void *libctx);
 static int slv_lc_nminim(XPRMcontext ctx, void *libctx);
@@ -95,7 +96,8 @@ static XPRMdsofct tabfct[]=
    {"maximise", 2101, XPRM_TYP_NOT,1,"c", slv_lc_maxim},
    {"maximize", 2101, XPRM_TYP_NOT,1,"c", slv_lc_maxim},
    {"setcbintsol", 2102, XPRM_TYP_NOT,1,"s", slv_lc_setcbintsol},
-   {"writeprob", 2103, XPRM_TYP_NOT,2,"ss", slv_lc_writepb},
+  {"setcbintsol", 2103, XPRM_TYP_NOT,1,"F()", slv_lc_setcbintsol_pr},
+   {"writeprob", 2104, XPRM_TYP_NOT,2,"ss", slv_lc_writepb},
    {"minimise", 2120, XPRM_TYP_NOT,1,"|nlctr|", slv_lc_nminim},
    {"minimize", 2120, XPRM_TYP_NOT,1,"|nlctr|", slv_lc_nminim},
    {"maximise", 2121, XPRM_TYP_NOT,1,"|nlctr|", slv_lc_nmaxim},
@@ -325,9 +327,9 @@ static int slv_findparam(const char *name, int *type, int why, XPRMcontext ctx,
 static void *slv_nextparam(void *ref, const char **name, const char **desc,
                 int *type)
 {
- long cst;
+ size_t cst;
 
- cst=(long)ref;
+ cst=(size_t)ref;
  if((cst<0)||(cst>=SLV_NBPARAM))
   return NULL;
  else
@@ -445,9 +447,9 @@ static int slv_lc_minim(XPRMcontext ctx, void *libctx)
  return slv_optim(ctx,(s_slvctx *)libctx,OBJ_MINIMIZE,obj,NULL);
 }
 
-/***************************/
-/* Define integer callback */
-/***************************/
+/********************************************/
+/* Define integer callback (procedure name) */
+/********************************************/
 static int slv_lc_setcbintsol(XPRMcontext ctx, void *libctx)
 {
  s_slvctx *slctx;
@@ -460,12 +462,17 @@ static int slv_lc_setcbintsol(XPRMcontext ctx, void *libctx)
  slpb=SLVCTX2PB(slctx);
  procname=XPRM_POP_REF(ctx);
 
+ if(slpb->cb_intsol!=NULL)
+ {
+  mm->delref(ctx,XPRM_STR_PROC,slpb->cb_intsol);
+  slpb->cb_intsol=NULL;
+ }
  if(procname!=NULL)
  {                  /* The specified entity must be a procedure */
   if(XPRM_STR(mm->findident(ctx,procname,&result,XPRM_FID_NOLOC))!=XPRM_STR_PROC)
   {
    mm->dispmsg(ctx,"myqxprs: Wrong subroutine type for callback `intsol'.\n");
-   return RT_ERROR;
+   return XPRM_RT_ERROR;
   }
   do
   {                 /* The specified procedure must not have any arguments */
@@ -477,14 +484,39 @@ static int slv_lc_setcbintsol(XPRMcontext ctx, void *libctx)
   if(result.proc==NULL)
   {
    mm->dispmsg(ctx,"myqxprs: Wrong procedure type for callback `intsol'.\n");
-   return RT_ERROR;
+   return XPRM_RT_ERROR;
   }
   else
-   slpb->cb_intsol=result.proc;
+   slpb->cb_intsol=mm->newref(ctx,XPRM_STR_PROC,result.proc);
+ }
+ return XPRM_RT_OK;
+}
+
+/*************************************************/
+/* Define integer callback (procedure reference) */
+/*************************************************/
+static int slv_lc_setcbintsol_pr(XPRMcontext ctx,void *libctx)
+{
+ s_slvctx *slctx;
+ s_slvpb *slpb;
+ mm_proc proc;
+
+ slctx=libctx;
+ slpb=SLVCTX2PB(slctx);
+ proc=XPRM_POP_REF(ctx);
+
+ if(proc==NULL)
+ {
+  mm->dispmsg(ctx,"myxprs: NULL reference.\n");
+  return XPRM_RT_ERROR;
  }
  else
-  slpb->cb_intsol=NULL;
- return RT_OK;
+ {
+  if(slpb->cb_intsol!=NULL)
+   mm->delref(ctx,XPRM_STR_PROC,slpb->cb_intsol);
+  slpb->cb_intsol=mm->newref(ctx,XPRM_STR_PROC,proc);
+ }
+ return XPRM_RT_OK;
 }
 
 /******************/
@@ -509,15 +541,15 @@ static int slv_lc_writepb(XPRMcontext ctx, void *libctx)
   if(rts)
   {
    mm->dispmsg(ctx,"myqxprs: Error when executing `writeprob'.\n");
-   return RT_IOERR;
+   return XPRM_RT_IOERR;
   }
   else
-   return RT_OK;
+   return XPRM_RT_OK;
  }
  else
  {
   mm->dispmsg(ctx,"myqxprs: Cannot write to '%s'.\n",dname!=NULL?dname:"");
-  return RT_IOERR;
+  return XPRM_RT_IOERR;
  }
 }
 

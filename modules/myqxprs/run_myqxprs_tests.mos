@@ -28,7 +28,7 @@ model "testing myqxprs"
   m: Model
  end-declarations
 
- forall(f in ["myqxprstest1","myqxprstest2","myqxprstest3","myqxprstest4","myqxprstest5"]) do
+ forall(f in ["myqxprstest1","myqxprstest2","myqxprstest3","myqxprstest4","myqxprstest4s","myqxprstest5"]) do
    writeln("-"*30,f,"-"*30)
    fflush
    res:=compile(f+".mos")
@@ -38,7 +38,7 @@ model "testing myqxprs"
    wait
    ev:=getnextevent
    writeln("********",ev)
-   exit(0)
+ !  exit(0)
  !  dropnextevent
  end-do
  

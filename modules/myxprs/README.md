@@ -3,7 +3,7 @@
 ## Description
 
 The example module *myxprs* uses the matrix handling functionality provided by the Mosel NI for implementing a basic interface
-to [Xpress Optimizer](https://community.fico.com/docs/DOC-3718) for solving linear and mixed integer (LP and MIP) optimization problems. Features demonstrated by this module include:
+to [Xpress Optimizer](https://www.fico.com/en/products/fico-xpress-solver) for solving linear and mixed integer (LP and MIP) optimization problems. Features demonstrated by this module include:
 
 * Modeling functionality:
   * definition of subroutines to start an optimization run and retrieve solution values
@@ -29,7 +29,7 @@ See chapter 'Implementing an LP/MIP solver interface' of the [Mosel NI User Guid
 ## Building instructions
 
 > Compiling a DSO requires a C compiler.
-> Besides a recent (4.8 or later) version of the Mosel C libraries this module also requires the Xpress Optimizer C libraries to be installed. 
+> Besides a recent (6.0 or later) version of the Mosel C libraries this module also requires the Xpress Optimizer C libraries to be installed. 
 
 Building this module requires additional dependencies, please use one of these commands depending on your operating system:
 
@@ -61,7 +61,7 @@ Or configure the provided [makefiles](../README.md) as follows:
 
 ## Testing
 
-A recent (4.8 or later) version of Xpress Mosel needs to be installed.
+A recent (6.0 or later) version of Xpress Mosel needs to be installed.
 Make sure the file `myxprs.dso` is on the DSO search path (either in the *dso* subdirectory of your Xpress Mosel installation or in a location pointed to by the enviroment variable `MOSEL_DSO`).
 Run the provided test master model *[run_myxprs_tests.mos](run_myxprs_tests.mos)*:
 * from the command line: `mosel run_myxprs_tests`

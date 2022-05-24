@@ -1,12 +1,12 @@
 (!******************************************************
-  file myxprsmodel2.mos
-  `````````````````````
+  file myxprsmodel2s.mos
+  ``````````````````````
   Testing myxprs:
-  * Defining an integer solution callback (via subroutine reference)
+  * Defining and integer solution callback (via subroutine name)
     
   author: S.Heipcke, Oct. 2017
 
-  (c) Copyright 2018-2022 Fair Isaac Corporation
+  (c) Copyright 2018 Fair Isaac Corporation
   
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ model "Integer solution callback"
   fopen("tee:text:foutput&", F_OUTPUT)
 
  ! **** Definition of the callback subroutine ****
-  procedure intsol
+  public procedure intsol
     writeln("!!! New solution !!!")
     writeln("x=", getsol(x), ";y=", getsol(y),
       ";obj=", getparam("myxp_lpobjval"))
@@ -47,7 +47,7 @@ model "Integer solution callback"
   x is_integer; y is_integer
 
  ! Define a solver callback (invoked whenever an integer solution is found)
-  setcbintsol(->intsol)
+  setcbintsol("intsol")
 
  ! Solve the MIP problem
   maximize(MyObj)

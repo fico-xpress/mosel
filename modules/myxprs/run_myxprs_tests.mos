@@ -28,7 +28,7 @@ model "testing myxprs"
   m: Model
  end-declarations
 
- forall(f in ["myxprsmodel1","myxprsmodel1p","myxprsmodel2","myxprsmodel3"]) do
+ forall(f in ["myxprsmodel1","myxprsmodel1p","myxprsmodel2","myxprsmodel2s","myxprsmodel3"]) do
    writeln("-"*30,f,"-"*30)
    fflush
    res:=compile(f+".mos")
