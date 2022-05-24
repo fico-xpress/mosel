@@ -5,7 +5,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2018 Fair Isaac Corporation
+  (c) Copyright 2021 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 *******************************************************!)
 model moseltest
-version 0.2.1
+version 0.4.5
 uses 'mmsystem','mmjobs'
 
 parameters
@@ -41,7 +41,7 @@ parameters
  VALGRIND=false     ! Run tests with valgrind
  KEEPENV=false      ! Keep Mosel related environment variables
  LINELEN=80         ! Length of a line in the report
- TC=false           ! Switch to Teamcity messaging
+ TC=getenv("TEAMCITY_VERSION")<>"" ! Switch to Teamcity messaging
  TCMAXLOG=60000     ! Maximum length of a log file for Teamcity (characters)
  SAVELOGS=false     ! Keep example log even when successful
 end-parameters
@@ -59,8 +59,11 @@ declarations
  excludepat=["*.c9"+getdirsep+"*"]
 
  sysname:string
+ sysproc:string
  syshost:string
  sysarch:integer
+ sysnaarch:string
+ sysnaproc:string
  usenmake:boolean
  repfile:string
  env_dsodir:text
@@ -79,6 +82,7 @@ end-declarations
 forward function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
 forward procedure startinstance
 forward procedure endinstance(discon:boolean)
+forward procedure run_mdr(parms:text)
 forward function execmos(torun:text,parms:text):integer
 forward function dobuild(tobuild:text):boolean
 forward function gettotest(path:text):list of text
@@ -92,7 +96,7 @@ forward function expenv(ev:text):text
 forward function toskip(opts:array(set of string) of text,why:text):boolean
 forward function splicfgline(line:text,val:text):string
 forward function filexists(f:text):boolean
-forward function findpattern(rpat:text,f:text,rtl:list of integer):boolean
+forward function findpattern(rpat:text,f:text,rtmsg:text):boolean
 forward function splitlist(t:text,sc:integer):list of text
 forward function splitlist(t:text):list of text
 forward function splitset(t:text):set of string
@@ -131,6 +135,7 @@ forward function tc_getfile(f:string):text
  OPTTYPES("only_host"):="lst"	! list of host names where test is run
  OPTTYPES("only_sys"):="lst"	! list of system names where test is run
  OPTTYPES("setenv"):="lns"	! environment variable [sys.]<env>=<value>
+ OPTTYPES("noerrmsg"):="boo"	! if true: error stream must be clear after run
  finalise(OPTNAMES)
 
 ! System specific settings
@@ -241,6 +246,7 @@ forward function tc_getfile(f:string):text
   tcdur:=""
   if toskip(MOPT,reason) then
    if TC then
+    tc_quote(reason)
     writeln("##teamcity[testIgnored ",tclabel," message='",reason,"']")
    else
     writeln("Skipped (",reason,")")
@@ -250,6 +256,7 @@ forward function tc_getfile(f:string):text
    nbfail+=1
    savelogs(f,tclabel)
    if TC then
+    tc_quote(reason)
     writeln("##teamcity[testFailed ",tclabel," message='",reason,"']")
    else
     writeln(reason,"!!!")
@@ -311,7 +318,7 @@ forward function tc_getfile(f:string):text
 function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
  declarations
   specenv:set of string
-  rtl:list of integer
+  rtmsg:text
  end-declarations
 
  fflush
@@ -346,23 +353,17 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
       msg:="Failed to load bimfile"
       returned:=true
      else
-      run(mdr)
-      waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
-      if waitexpired then
-       if not TC then
-        write("(killed) "); fflush
-       end-if
-       stop(mdr)
-       waitfor(EVENT_END,-1,WAIT_EXACT)
-      end-if
-      dropnextevent
+      run_mdr("")
       expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
       expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
       if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
        msg:="Execution error"
        returned:=true
       end-if
-      unload(mdr)
+      setparam("ioctrl",true)
+       unload(mdr)
+       asproc(getparam("iostatus"))
+      setparam("ioctrl",false)
      end-if
     elif opts("package")<>"" then
      if not endswith(opts("package"),".bim") then opts("package")+=".bim"; end-if
@@ -412,12 +413,16 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
    returned:=true
   end-if
 
-  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtl) then
-   msg:=text("Failed to validate 'outexpect' (#")+rtl(1)+")"
+  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtmsg) then
+   msg:=text("Failed to validate 'outexpect' (")+rtmsg+")"
    returned:=true
   end-if
-  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtl) then
-   msg:=text("Failed to validate 'errexpect' (#")+rtl(1)+")"
+  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtmsg) then
+   msg:=text("Failed to validate 'errexpect' (")+rtmsg+")"
+   returned:=true
+  end-if
+  if not returned and opts("noerrmsg")="true" and getfsize(WKDIR+"/"+ERR)>0 then
+   msg:="Error messages have been displayed"
    returned:=true
   end-if
 
@@ -470,8 +475,34 @@ procedure endinstance(discon:boolean)
  if discon or minst.status<>0 then
   disconnect(minst)
  else
-  setdefstream(minst,"null:","","")
+  setparam("ioctrl",true)
+   setdefstream(minst,"null:","","")
+   iost:=getparam("iostatus")
+  setparam("ioctrl",false)
+  if iost<>0 then  ! instance crashed
+   disconnect(minst)
+  end-if
  end-if
+end-procedure
+
+!***********************************
+!* Run the model mdr on minst
+!***********************************
+procedure run_mdr(parms:text)
+ run(mdr,parms)
+ waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
+ if waitexpired then
+  if not TC then
+   write("(killed) "); fflush
+  end-if
+  stop(mdr)
+  waitfor(EVENT_END,20,WAIT_EXACT)
+  if waitexpired then
+   kill(minst)
+   waitfor(EVENT_END,-1,WAIT_EXACT)
+  end-if
+ end-if
+ dropnextevent
 end-procedure
 
 !***********************************
@@ -483,14 +514,7 @@ function execmos(torun:text,parms:text):integer
      safeload(mdr,"tmp:bimfile") then
    returned:=-1
   else
-   run(mdr,parms)
-   waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
-   if waitexpired then
-    write("(killed) "); fflush
-    stop(mdr)
-    waitfor(EVENT_END,-1,WAIT_EXACT)
-   end-if
-   dropnextevent
+   run_mdr(parms)
    if mdr.status<>0 then
     returned:=-2
    else
@@ -582,24 +606,30 @@ procedure cleardir(p:text,rmd:boolean)
   end-if
  end-if
 
- removefiles(SYS_RECURS,p,"*")
+ ! Firstly remove files only
+ removefiles(SYS_RECURS+SYS_NODIR,p,"*")
 
  if getsysstat<>0 then
   writeln("Failed to remove files from ",p)
- elif sysname="windows" then
- ! Under Windows there may remain dso/exe files still loaded, these will have
- ! been marked for deletion & will be actually deleted once they are unloaded.
-  allgone:=false
-  forall(i in 0..120) do
-   if i>0 then sleep(500); end-if
-   lsf:=[]
-   findfiles(SYS_RECURS+SYS_NODIR+SYS_NOSORT,lsf,p,"*")
-   if getsize(lsf)=0 then allgone:=true; break; end-if
-  end-do
-  if not allgone then
-   writeln("Unable to remove all files from ",p,", remaining files: ",lsf)
+ else
+  if sysname="windows" then
+   ! Under Windows there may remain dso/exe files still loaded, these will have
+   ! been marked for deletion & will be actually deleted once they are unloaded.
+   allgone:=false
+   forall(i in 0..120) do
+    if i>0 then sleep(500); end-if
+    lsf:=[]
+    findfiles(SYS_RECURS+SYS_NODIR+SYS_NOSORT,lsf,p,"*")
+    if getsize(lsf)=0 then allgone:=true; break; end-if
+   end-do
+   if not allgone then
+    writeln("Unable to remove all files from ",p,", remaining files: ",lsf)
+   end-if
   end-if
+  ! second round to remove directories
+  removefiles(SYS_RECURS,p,"*")
  end-if
+
  if rmd then
   removedir(p)
  end-if
@@ -616,6 +646,9 @@ procedure copydir(src:text,dst:string)
  if lsf.size>0 then
   newtar(0,"tmp:ttar",src,lsf)
   untar("tmp:ttar",dst)
+  if getsysstat <> 0 then
+   writeln('Could not copy files from "',src,'" to "',dst,'"!')
+  end-if
   fdelete("tmp:ttar")
  end-if
 end-procedure
@@ -706,7 +739,7 @@ procedure updenv(env:text,spe:set of string)
   trim(e)
   if regmatch(e,'^([-a-z0-9]+)\.([A-Za-z0-9_]+) *=(.*)',1,REG_EXTENDED,mp) then
    esys:=copytext(e,mp(1))
-   if esys<>sysname and esys<>sysname+sysarch then
+   if esys<>sysname and esys<>sysnaarch then
     if endswith(esys,"32") or endswith(esys,"64") then
      deltext(esys,esys.size-1,esys.size)
     end-if
@@ -770,7 +803,8 @@ function toskip(opts:array(set of string) of text,why:text):boolean
   end-if
   if opts("skip_sys")<>"" then
    lsn:=splitset(opts("skip_sys"))
-   if sysname in lsn or sysname+sysarch in lsn then
+   if sysname in lsn or sysnaarch in lsn or 
+      sysproc in lsn or sysnaproc in lsn then
     why:="on this system"
     returned:=true
    end-if
@@ -784,7 +818,8 @@ function toskip(opts:array(set of string) of text,why:text):boolean
   end-if
   if opts("only_sys")<>"" then
    lsn:=splitset(opts("only_sys"))
-   if sysname not in lsn and sysname+sysarch not in lsn then
+   if sysname not in lsn and sysnaarch not in lsn and
+      sysproc not in lsn and sysnaproc not in lsn  then
     why:="on this system"
     returned:=true
    end-if
@@ -855,7 +890,7 @@ end-function
 !************************************
 !* Look for a pattern in a log file
 !************************************
-function findpattern(rpat:text,f:text,rtl:list of integer):boolean
+function findpattern(rpat:text,f:text,rtmsg:text):boolean
  declarations
   mp:array(0..0) of textarea
   line:text
@@ -864,15 +899,15 @@ function findpattern(rpat:text,f:text,rtl:list of integer):boolean
  end-declarations
 
  if rpat<>"" then
+  lp:=splitlist(rpat,10)
   if not filexists(f) then
    returned:=true
-   rtl:=[0]
+   rtmsg:=formattext("#1: %s",lp.first)
   else
-   lp:=splitlist(rpat,10)
-   p:=string(lp.first)
    fopen(f,F_INPUT)
    returned:=true
    cnt:=1
+   p:=string(lp.first)
    while(readtextline(line)>=0) do
     if regmatch(line,p,1,REG_EXTENDED,mp) then
      cuthead(lp,1)
@@ -886,8 +921,10 @@ function findpattern(rpat:text,f:text,rtl:list of integer):boolean
     end-if
    end-do
    fclose(F_INPUT)
-   rtl:=[cnt]
+   rtmsg:=if(returned,formattext("#%d: %s",cnt,lp.first),text(""))
   end-if
+ else
+  reset(rtmsg)
  end-if
 end-function
 
@@ -963,6 +1000,9 @@ end-procedure
 procedure setsysdep
  sysname:=string(tolower(getsysinfo(SYS_NAME)))
  sysarch:=integer(getsysinfo(SYS_ARCH))
+ sysproc:=string(tolower(getsysinfo(SYS_PROC)))
+ sysnaarch:=sysname+sysarch
+ sysnaproc:=sysname+"-"+sysproc
  syshost:=getsysinfo(SYS_NODE)
 
  if sysname="windows" then
@@ -1031,11 +1071,20 @@ AIX32`)
    end-case
   else				! 64bit Unix
    case sysname of
-    "linux":writeln(`LIN64
+    "linux":
+	if sysproc="aarch64" then
+         writeln(`AARCH64
+CFLAGS=-fpic -D_REENTRANT -I$(XPRESSDIR)/include
+LDFLAGS=
+MAKEDSO=$(CC) -shared
+AARCH64`)
+	else
+         writeln(`LIN64
 CFLAGS=-m64 -fpic -D_REENTRANT -I$(XPRESSDIR)/include
 LDFLAGS=-fopenmp
 MAKEDSO=$(CC) -m64 -shared
 LIN64`)
+	end-if
     "sunos":writeln(`SOL64
 CFLAGS=-m64 -D_REENTRANT -Kpic -I$(XPRESSDIR)/include
 LDFLAGS=-lrt -lsocket -lnsl -lm
@@ -1113,7 +1162,7 @@ procedure startxsrv
    writeln("[xpress]")
    writeln("MOSEL_CWD=",expandpath(WKDIR))
    fclose(F_OUTPUT)
-   system("xprmsrv -d -pf "+PIDFILE+" "+expandpath("tmp:xcfg"))
+   system("xprmsrv -tm 3600 -d -pf "+PIDFILE+" "+expandpath("tmp:xcfg"))
    writeln("xprmsrv server started")
   end-if
  end-if
@@ -1166,7 +1215,7 @@ exit(getsysstat)
 end-model
 DOMAKE`)
  fclose(F_OUTPUT)
- returned:=execmos("rmt:tmp:domake.mos","TODO="+f)<>0
+ returned:=execmos("rmt:tmp:domake.mos",text("TODO=")+f)<>0
 end-function
 
 !********************************************
@@ -1194,7 +1243,7 @@ DOMAKE`)
  else
   todo:='.'+getdirsep+f
  end-if
- returned:=execmos("rmt:tmp:dorun.mos","TODO='"+todo+"'")<>0
+ returned:=execmos("rmt:tmp:dorun.mos",text("TODO='")+todo+"'")<>0
 end-function
 
 !*****************************************************

@@ -2,7 +2,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2018 Fair Isaac Corporation
+  (c) Copyright 2021 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -144,13 +144,16 @@ skip: boolean value indicating whether the test should be skipped.
 skip_host: space-separated list of host names on which the test must not be run 
 	(i.e. it is skipped when the procedure is run on any of these hosts).
 	Several 'skip_host' can be specified: their values are concatenated.
-skip_sys: list of system names on which the test must not be run (i.e. it is
-	skipped when the procedure is run on any of these systems).
+skip_sys: list of system names or processor types on which the test must not
+	be run (i.e. it is skipped when the procedure is run on any of these
+	systems).
 	Several 'skip_sys' can be specified: their values are concatenated.
 	Valid system names are: aix darwin linux hp-ux sunos windows
 	The architecture may be appended to the system name. For instance
 	'linux' will cause the test to be skipped on all Linux machines
 	but 'linux64' will keep the test on Linux 32bit.
+	The processor type prefixed by a '-' may also be appended to the
+	system name (e.g. 'linux-x86_64').
 only_host: is the opposite of 'skip_host': the test is run only on the
 	specified hosts.
 only_sys: is the opposite of 'skip_sys': the test is run only on the
@@ -206,6 +209,9 @@ outexpect: an extended regular expression that will be searched in the output
 	found.
 errexpect: similar as 'outexpect' but expressions are searched in the error
 	stream.
+noerrmsg: Boolean indicating that any message sent to the error stream will
+        cause a test failure (by default the error stream is ignored if
+	execution succeeded).
 restart: Boolean indicating whether the Mosel instance must be restarted after
 	this test.
 	All tests are run on the same Mosel instance. When this tag is set
