@@ -10,7 +10,7 @@ The package contains its documentation as *moseldoc* markup. To produce the docu
 
 `mosel make DOC=true`
 
-A *[PDF](jobqueue.pdf)* of the slides presenting this package is also available. 
+The *[PDF version of moseldoc documentation](jobqueueref.pdf)* and a *[PDF](jobqueue.pdf)* of the slides presenting this package is also available. 
 
 ## Building instructions
 
@@ -26,7 +26,7 @@ Alternatively, you can choose to perform the following individual build steps:
 3. Execute the test model *mainjq.mos* in the subdirectory **test** :
 `mosel mainjq`
 
-> A recent version of Mosel (Mosel 5) is required for executing the example.
+> A recent version of Mosel (Mosel 5 or newer) is required for executing the example.
 > The remote instances may use an older version (Mosel 4), as required by the models that are to be run.
 
 

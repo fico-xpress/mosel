@@ -7,7 +7,7 @@ Build options:
 *   DBG=true :   debug compilation for all components
 *   CLEAN=true :  remove all generated files (no build takes place)
 
-> *This package can only be compiled with Mosel 5*
+> *This package can only be compiled with Mosel 5 or more recent*
 
 ## Legal
 

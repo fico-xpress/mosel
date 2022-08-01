@@ -28,16 +28,24 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 
+    0.0.1 Jan 2019  Initial version
+    0.0.2 Dec 2021  Updates to use Mosel 5 functionality
+    0.0.3 Jul 2022  Updated inline documentation
+
 *******************************************************!)
 package jobqueue
-version 0.0.2
+version 0.0.3
 uses 'mmsystem','mmjobs'
 imports 'jqcommon'
 nssearch jsched
 
 parameters
- !@doc.descr Package output level
- !@doc.info Positive values up to 10 or 0 to disable output from this package.
+(!@doc.cparam.
+  @descr jq_verbose Package output level
+  @default jq_verbose 0
+  @info jq_verbose Positive values up to 10 or 0 to disable output from this package.
+  @info jq_verbose The parameter is accessed via Mosel's getparam/setparam routines, for example, use <tt>setparam("jq_verbose", 2)</tt> to enable logging and some debugging output by <i>jobqueue</i>. 
+!)
  "jq_verbose":integer  
 end-parameters
 
@@ -81,6 +89,8 @@ end-procedure
   @param j a job
   @param src a data file
   @param dst filename to be used on the host for src
+  @example See <fctRef>jobinit</fctRef>
+  @info The destination filename must be an actual filename, not including any I/O driver. If the 'dst' argument is not specified its value is deduced from the 'src' argument, in which case the filename specified for 'src' must be a complete path (excluding the use of I/O drivers, including 'tmp:'). If the source filename in 'src' is specified as an extended filename using an I/O driver, then the 'dst' filename must be stated explicitly, using the 3-argument version of this subroutine.  
 !)
 public procedure jobadd(j:jq_job,src:text,dst:text)
  j.srcfiles+=[expandpath(src)]
@@ -100,6 +110,7 @@ end-procedure
   @descr Define the result file for a job
   @param j a job
   @param rfile file containing the result of the execution
+  @example See <fctRef>jobinit</fctRef>
 !)
 public procedure jobsetresult(j:jq_job,rfile:text)
  j.resultfile:=rfile
@@ -110,7 +121,22 @@ end-procedure
   @param j job to initialize
   @param src file containing the model to run (.bim or .mos)
   @param dst filename to be used on the host for src
-  @param maxretry maximum number of attempts at running the model in case of server disconnection
+  @param maxretry maximum number of attempts at running the model in case of server disconnection (default: 0)
+  @example The following example defines three jobs with different configurations.
+  @example [SRC]
+ public declarations
+   job,job2,job3: jq_job
+   tasks: list of integer
+   mpar: text
+ end-declarations 
+     
+ jobinit(job,"simple.bim")         ! Model is already compiled
+
+ jobinit(job2,"simplewdata.mos")   ! Model gets compiled by 'jobqueue'
+ jobadd(job2,"simpledata.txt")     ! Add a data file for this model
+ jobsetresult(job2,"results.txt")  ! Specify the result file (single file)
+
+ jobinit(job3,"simple.mos",2)      ! 2 attempts to run model if server failure
 !)
 public procedure jobinit(j:jq_job,src:text,dst:text,maxretry:integer)
  reset(j)
@@ -127,6 +153,7 @@ end-procedure
   @descr Initialize a job
   @param j job to initialize
   @param src file containing the model to run (.bim or .mos)
+  @info The destination filename must be an actual filename, not including any I/O driver. If the 'dst' argument is not specified its value is deduced from the 'src' argument, in which case the filename specified for 'src' must be a complete path (excluding the use of I/O drivers, including 'tmp:'). If the source filename in 'src' is specified as an extended filename using an I/O driver, then the 'dst' filename must be stated explicitly, using the 4-argument version of this subroutine.  
 !)
 public procedure jobinit(j:jq_job,src:text)
  jobinit(j,src,pathsplit(SYS_FNAME,src),0)
@@ -136,7 +163,7 @@ end-procedure
   @descr Initialize a job
   @param j job to initialize
   @param src file containing the model to run (.bim or .mos)
-  @param maxretry maximum number of attempts at running the model in case of server disconnection
+  @param maxretry maximum number of attempts at running the model in case of server disconnection (default: 0)
 !)
 public procedure jobinit(j:jq_job,src:text,maxretry:integer)
  jobinit(j,src,pathsplit(SYS_FNAME,src),maxretry)
@@ -147,6 +174,20 @@ end-procedure
 (!@doc.
   @descr Create a new queue
   @return ID for the new queue
+  @example The following example shows different configuration options for queues.
+  @example [SRC]
+ public declarations
+   queue: integer
+   nd1,nd2,nd3,nd4: integer
+ end-declarations 
+
+ queue:=queuenew                 ! Create a new queue
+
+ nd1:=queueaddnode(queue,"*",2)  ! Use same instance as current (no 'connect')
+                                 ! with 2 workers (=2 concurrent executions)
+ nd2:=queueaddnode(queue,"",3)   ! New instance (via rcmd) on current machine
+ nd3:=queueaddnode(queue,"somemach")   ! New inst. (xprmsrv) on remote machine
+ nd4:=queueaddnode(queue,"localhost")  ! New inst. via xprmsrv on current
 !)
 public function queuenew:integer
  if qsched.status<>RT_RUNNING then
@@ -160,8 +201,9 @@ end-function
 
 (!@doc.
   @descr Delete a queue
-  @return true if successul or false if the queue is busy
+  @return true if successful or false if the queue is busy
   @info A queue cannot be deleted when it is running tasks
+  @example See <fctRef>queuewait</fctRef>
 !)
 public function queuedel(qid:integer):boolean
  returned:=sendcmd(CMD_DELQUEUE,"queuedel",qid)=0
@@ -179,6 +221,7 @@ end-function
   @param cstr connection string (if "*" the current instance is used)
   @param mt maximum number of models to run on this node
   @return ID for the new node
+  @example See <fctRef>queuenew</fctRef>
 !)
 public function queueaddnode(qid:integer,cstr:text,mt:integer):integer
  initialisations to msgfile
@@ -199,7 +242,8 @@ end-function
 (!@doc.
   @descr Retrieve the number of pending tasks of a queue
   @param qid a queue ID
-  @return number of tasks executing and waiting for execution
+  @return Number of tasks executing and waiting for execution
+  @example See <fctRef>queuegetinfo</fctRef>
 !)
 public function queuepending(qid:integer):integer
  returned:=sendcmd(CMD_QUEPEND,"queuepending",qid)
@@ -209,7 +253,26 @@ end-function
   @descr Suspend execution until a queue has run all its tasks
   @param qid a queue ID
   @param maxtime maximum amount of time to wait (in seconds)
-  @return number of tasks executing and waiting for execution
+  @return Number of tasks executing and waiting for execution
+  @example The following example shows how to use different forms of 'queuewait' and explicit termination.
+  @example [SRC]
+ public declarations
+   queue: integer
+   rti: integer
+   rtb: boolean
+ end-declarations 
+ 
+ rti:=queuewait(queue)         ! Wait for all tasks to terminate
+ writeln("End of wait: ",rti)  ! Number of tasks executing or waiting
+
+ ! Alternative forms:
+ rti:=queuewaitnext(queue)     ! Wait for next task termination
+ rti:=queuewait(queue,10)      ! Wait for 10 seconds
+
+ ! Optional: explicit termination/deletion
+ queuedeltasks(queue)          ! Delete all pending+terminated tasks
+ rtb:=queuereset(queue)        ! Del. pending + disconnect nodes (if not busy)
+ rtb:=queuedel(queue)          ! Delete a queue (only if not busy)  
 !)
 public function queuewait(qid:integer,maxtime:real):integer
  if maxtime=0 then
@@ -226,7 +289,7 @@ end-function
 (!@doc.
   @descr Suspend execution until a queue has run all its tasks
   @param qid a queue ID
-  @return number of tasks executing and waiting for execution
+  @return Number of tasks executing and waiting for execution
 !)
 public function queuewait(qid:integer):integer
  returned:=queuewait(qid,-1)
@@ -236,7 +299,8 @@ end-function
   @descr Suspend execution until a task finishes in a queue
   @param qid a queue ID
   @param maxtime maximum amount of time to wait (in seconds)
-  @return number of tasks executing and waiting for execution
+  @return Number of tasks executing and waiting for execution
+  @example See <fctRef>queuewait</fctRef>
 !)
 public function queuewaitnext(qid:integer,maxtime:real):integer
  if maxtime=0 then
@@ -253,7 +317,7 @@ end-function
 (!@doc.
   @descr Suspend execution until a task finishes in a queue
   @param qid a queue ID
-  @return number of tasks executing and waiting for execution
+  @return Number of tasks executing and waiting for execution
 !)
 public function queuewaitnext(qid:integer):integer
  returned:=queuewaitnext(qid,-1)
@@ -262,7 +326,7 @@ end-function
 (!@doc.
   @descr Flushes a queue
   @param qid a queue ID
-  @info All tasks waiting for execution are removed from the queue and deleted
+  @info All tasks waiting for execution are removed from the queue and deleted.
 !)
 public procedure queueflush(qid:integer)
  asproc(sendcmd(CMD_QUEFLUS,"queueflush",qid))
@@ -271,7 +335,8 @@ end-procedure
 (!@doc.
   @descr Delete all tasks associated to a queue
   @param qid a queue ID
-  @info All tasks waiting for execution are removed from the queue and deleted, all tasks that have finished execution are also deleted
+  @info All tasks waiting for execution are removed from the queue and deleted, all tasks that have finished execution are also deleted.
+  @example See <fctRef>queuewait</fctRef>
 !)
 public procedure queuedeltasks(qid:integer)
   asproc(sendcmd(CMD_TSKFQUE,"queuedeltasks",qid))
@@ -281,7 +346,8 @@ end-procedure
   @descr Reset a queue
   @param qid a queue ID
   @return true if successful or false if queue is still executing tasks
-  @info <fctRef>queueflush</fctRef> is called and all nodes are disconnected
+  @info <fctRef>queueflush</fctRef> is called and all nodes are disconnected.
+  @example See <fctRef>queuewait</fctRef>
 !)
 public function queuereset(qid:integer):boolean
  returned:=sendcmd(CMD_QUEREST,"queuereset",qid)=0
@@ -291,6 +357,16 @@ end-function
   @descr Retrieve queue information
   @param qid a queue ID
   @param jqi record where the queue status is returned
+  @example The following example retrieves and displays information about a queue.
+  @example [SRC]
+ public declarations
+   queue: integer
+   jqi: jq_qinfo
+ end-declarations 
+
+ queuegetinfo(queue,jqi)         ! Queue info: workers, pending+running tasks 
+ writeln("Queue info:", jqi)
+ writeln(queuepending(queue))    ! Display pending tasks
 !)
 public procedure queuegetinfo(qid:integer,jqi:jq_qinfo)
  reset(jqi)
@@ -308,7 +384,24 @@ end-procedure
   @param qid a queue ID
   @param j job to add
   @param rtp parameter string to be used for execution
-  @return a unique task ID
+  @return A unique task ID
+  @example The following example queues several instances of a job, specifying different runtime parameter settings per task. It then adds an instance of a second job.
+  @example [SRC]
+ public declarations
+   job,job2: jq_job
+   tasks: list of integer
+   queue: integer
+   mpar: text
+ end-declarations 
+     
+ !... create 'queue' and initialize the jobs ... 
+
+ forall(i in 1..NB) do              ! Queue some jobs with runtime parameters
+   setmodpar(mpar, "WAIT_IN_SUBMODEL", i)
+   setmodpar(mpar, "IMPORTANT_PARAM", text("Hello World ") + (i^2))
+   tasks+=[queueaddjob(queue, job, mpar)]
+ end-do
+ tasks+=[queueaddjob(queue, job2)]  ! Queue another job
 !)
 public function queueaddjob(qid:integer,j:jq_job,rtp:text):integer
  initialisations to msgfile
@@ -321,7 +414,7 @@ end-function
   @descr Add a job to a queue
   @param qid a queue ID
   @param j job to add
-  @return a unique task ID
+  @return A unique task ID
 !)
 public function queueaddjob(qid:integer,j:jq_job):integer
  returned:=queueaddjob(qid,j,"")
@@ -330,8 +423,8 @@ end-function
 (!@doc.
   @descr Delete a task
   @param tid a task ID
-  @return true if sucessful or false if the task does not exist or is currently running
-  @info A task waiting for execution will be removed from its queue
+  @return true if successful or false if the task does not exist or is currently running
+  @info A task waiting for execution will be removed from its queue.
 !)
 public function taskfree(tid:integer):boolean
   returned:=sendcmd(CMD_TSKFREE,"taskfree",tid)=0
@@ -340,7 +433,7 @@ end-function
 (!@doc.
   @descr Cancel a task
   @param tid a task ID
-  @info A running task will be stopped
+  @info A running task will be stopped.
 !)
 public procedure taskcancel(tid:integer)
   asproc(sendcmd(CMD_TSKCANC,"taskcancel",tid))
@@ -349,7 +442,7 @@ end-procedure
 (!@doc.
   @descr Restart a task
   @param tid a task ID
-  @info This routine has no effect is the task is already scheduled or running
+  @info This routine has no effect if the task is already scheduled or running.
 !)
 public procedure taskrestart(tid:integer)
   asproc(sendcmd(CMD_TSKREST,"taskrestart",tid))
