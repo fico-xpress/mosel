@@ -8,7 +8,7 @@
   * implementation of a solver (integer solution) callback
   * routine for matrix output by the solver
 
-  author: Y. Colombani, S. Heipcke, 2017
+  author: Y. Colombani, S. Heipcke, 2017, rev. Jul. 2022
 
   (c) Copyright 2018-2022 Fair Isaac Corporation
   
@@ -155,7 +155,7 @@ static struct              /* Parameters published by this module */
   } myxprsparams[]=
   {
    {"myxp_verbose",XPRM_TYP_BOOL|XPRM_CPAR_READ|XPRM_CPAR_WRITE},
-   {"myxp_maxtime",XPRM_TYP_INT|XPRM_CPAR_READ|XPRM_CPAR_WRITE},
+   {"myxp_timelimit", XPRM_TYP_REAL|XPRM_CPAR_READ|XPRM_CPAR_WRITE},
    {"myxp_lpstatus",XPRM_TYP_INT|XPRM_CPAR_READ},
    {"myxp_mipstatus",XPRM_TYP_INT|XPRM_CPAR_READ},
    {"myxp_lpobjval",XPRM_TYP_REAL|XPRM_CPAR_READ},
@@ -191,7 +191,7 @@ static double slv_getsol_c(XPRMcontext ctx, void *mipctx,int what, int row);
 static void slv_clearsol(XPRMcontext ctx, void *mipctx);
         /* Solver callback funtions */
 static int XPRS_CC slv_cb_stopxprs(XPRSprob prob, s_slvpb *slpb);
-static void XPRS_CC slv_cb_output(XPRSprob prob, void *p, const char *ch, 
+static void XPRS_CC slv_cb_output(XPRSprob prob, void *p, const char *ch,
   int n, int errtype);
 static void XPRS_CC slv_cb_intsol(XPRSprob opt_prob, s_slvpb *slpb);
         /* Memory management */
@@ -209,7 +209,7 @@ static mm_mipsolver xpress=
 /************************************************/
 /* Initialize the library just after loading it */
 /************************************************/
-DSO_INIT myxprs_init(XPRMnifct nifct, int *interver, int *libver, 
+DSO_INIT myxprs_init(XPRMnifct nifct, int *interver, int *libver,
                      XPRMdsointer **interf)
 {
  int r;
@@ -309,7 +309,7 @@ static void *slv_nextparam(void *ref,const char **name,const char **desc,
  size_t cst;
 
  cst=(size_t)ref;
- if((cst<0)||(cst>=SLV_NBPARAM))
+ if(cst>=SLV_NBPARAM)
   return NULL;
  else
  {
@@ -341,8 +341,8 @@ static int slv_lc_getpar(XPRMcontext ctx,void *libctx)
    XPRM_PUSH_INT(ctx,(slctx->options&OPT_VERBOSE)?1:0);
    break;
   case 1:
-   XPRSgetintcontrol(SLVCTX2PB(slctx)->xpb,XPRS_MAXTIME,&n);
-   XPRM_PUSH_INT(ctx,n);
+   XPRSgetdblcontrol(SLVCTX2PB(slctx)->xpb,XPRS_TIMELIMIT,&r);
+   XPRM_PUSH_REAL(ctx,r);
    break;
   case 2:
    XPRSgetintattrib(SLVCTX2PB(slctx)->xpb,XPRS_LPSTATUS,&n);
@@ -382,7 +382,7 @@ static int slv_lc_setpar(XPRMcontext ctx,void *libctx)
     slctx->options=XPRM_POP_INT(ctx)?(slctx->options|OPT_VERBOSE):(slctx->options&~OPT_VERBOSE);
     break;
   case 1:
-    XPRSsetintcontrol(SLVCTX2PB(slctx)->xpb,XPRS_MAXTIME,XPRM_POP_INT(ctx));
+    XPRSsetdblcontrol(SLVCTX2PB(slctx)->xpb,XPRS_TIMELIMIT,XPRM_POP_REAL(ctx));
     break;
   case 5:
     slctx->options=XPRM_POP_INT(ctx)?(slctx->options|OPT_LOADNAMES):(slctx->options&~OPT_LOADNAMES);
@@ -487,7 +487,7 @@ static int slv_lc_setcbintsol_pr(XPRMcontext ctx,void *libctx)
  if(proc==NULL)
  {
   mm->dispmsg(ctx,"myxprs: NULL reference.\n");
-  return RT_ERROR;
+  return XPRM_RT_ERROR;
  }
  else
  {
@@ -495,7 +495,7 @@ static int slv_lc_setcbintsol_pr(XPRMcontext ctx,void *libctx)
    mm->delref(ctx,XPRM_STR_PROC,slpb->cb_intsol);
   slpb->cb_intsol=mm->newref(ctx,XPRM_STR_PROC,proc);
  }
- return RT_OK;
+ return XPRM_RT_OK;
 }
 
 /******************/
@@ -570,7 +570,7 @@ static void *slv_pb_create(XPRMcontext ctx,void *libctx,void *toref,int type)
  /* Define log callbacks to report program interruption */
  XPRSaddcblplog(slpb->xpb,(void*)slv_cb_stopxprs,slpb,0);
  XPRSaddcbcutlog(slpb->xpb,(void*)slv_cb_stopxprs,slpb,0);
- XPRSaddcbgloballog(slpb->xpb,(void*)slv_cb_stopxprs,slpb,0);
+ XPRSaddcbmiplog(slpb->xpb,(void*)slv_cb_stopxprs,slpb,0);
  XPRSaddcbbarlog(slpb->xpb,(void*)slv_cb_stopxprs,slpb,0);
 
  if(slctx->probs!=NULL)
@@ -767,7 +767,7 @@ static int slv_loadmat(XPRMcontext ctx,void *mipctx,mm_matrix *m)
 
  sprintf(pbname,"xpb%p",slpb);
  if(slpb->is_mip)
-  r=XPRSloadglobal(slpb->xpb,pbname,m->ncol,m->nrow,
+  r=XPRSloadmip(slpb->xpb,pbname,m->ncol,m->nrow,
     m->qrtype,m->rhs,m->range,m->obj,
     m->mstart,NULL,m->mrwind,m->dmatval,m->dlb,m->dub,
     m->ngents,m->nsos,m->qgtype,m->mgcols,m->mplim,m->qstype,

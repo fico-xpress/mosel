@@ -4,7 +4,7 @@
   Testing myqxprs:
   * continuous problem solving and solution retrieval
     
-  author: S.Heipcke, Apr. 2018
+  author: S.Heipcke, Apr. 2018, rev. Nov. 2022
 
   (c) Copyright 2018 Fair Isaac Corporation
   
@@ -24,11 +24,12 @@
 model "Problem solving and solution retrieval"
   uses "myqxprs"                       ! Load the solver module
   options keepassert
+  version 0.2.0
 
   declarations
-    RN = 1..5                      ! Set of points
-    CX,CY: array(RN) of real       ! Target location for each point
-    x,y: array(RN) of mpvar        ! Decision variables
+    RN = 1..5                          ! Set of points
+    CX,CY: array(RN) of real           ! Target location for each point
+    x,y: array(RN) of mpvar            ! Decision variables
    end-declarations
 
   CX::[-5,5,5,-5,1]; CY::[5,5,-5,-5,0]
@@ -47,9 +48,9 @@ model "Problem solving and solution retrieval"
     LimDist(i):= (x(i)-CX(i))^2+(y(i)-CY(i))^2 <= 1
 
  ! Setting solver parameters
-  setparam("myxp_verbose", true)      ! Display solver log
-  setparam("myxp_maxtime", 10)        ! Set a time limit
-  assert(getparam("myxp_maxtime")= 10, "Incorrect control parameter value")
+  setparam("myxp_verbose", true)       ! Display solver log
+  setparam("myxp_timelimit", 10)       ! Set a time limit
+  assert(getparam("myxp_timelimit")= 10, "Incorrect control parameter value")
 
  ! Solve the problem (includes matrix generation) 
   minimize(TotDist)

@@ -4,7 +4,7 @@
   Testing myxprs:
   * Problem solving and solution retrieval
     
-  author: S.Heipcke, Oct. 2017
+  author: S.Heipcke, Oct. 2017, rev. Nov. 2022
 
   (c) Copyright 2018 Fair Isaac Corporation
   
@@ -24,6 +24,7 @@
 model "Problem solving and solution retrieval"
   uses "myxprs"                       ! Load the solver module
   options keepassert
+  version 0.2.0
 
   declarations
     x,y: mpvar                        ! Some decision variables
@@ -35,8 +36,8 @@ model "Problem solving and solution retrieval"
 
  ! Setting solver parameters
   setparam("myxp_verbose", true)      ! Display solver log
-  setparam("myxp_maxtime", 10)        ! Set a time limit
-  assert(getparam("myxp_maxtime")= 10, "Incorrect control parameter value")
+  setparam("myxp_timelimit", 10)      ! Set a time limit
+  assert(getparam("myxp_timelimit")= 10, "Incorrect control parameter value")
 
  ! Solve the problem (includes matrix generation) 
   maximize(MyObj)
