@@ -2,7 +2,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2021 Fair Isaac Corporation
+  (c) Copyright 2015-2022 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ Working with moseltest
 
 The 'moseltest' Mosel program is a general framework for testing
 Mosel using source Mosel files, C programs or Java programs.
-For its execution it only requires a valid Xpress installation and,
+It can also be used for testing pre-compiled models, packages or
+applications (in the form of zip archives) and optionally collect
+coverage statistics during the execution of the tests.
+For its execution 'moseltest' only requires a valid Xpress installation and,
 if the tests are written in C or Java, the corresponding development
 tools:
 - for Java: java and javac
@@ -41,12 +44,16 @@ When using a directory as the source for test files, any
 directory structure is accepted (i.e. all subdirectories are traversed
 and files are processed in alphabetical order).
 
-A test can be packaged either as a single file (.mos, .c or .java),
+A test can be packaged either as a single file (.mos, .c, .java or .mcf),
 as an archive (.tar, .tar.gz, .tgz or .zip) or as a subdirectory (the name
 of such a directory must end with .dir). In the case of an archive (or directory
-tree), either it contains only one executable file (i.e. a single .c, .mos or
-.java file) or the main file to run must be named 'main.mos', 'main.c' or
-'main.java'.
+tree), either it contains only one executable file (i.e. a single .c, .mos,
+.java or .mcf file) or the main file to run must be named 'main.mos', 'main.c',
+'main.java' or 'main.mcf'.
+
+Source files (extension mos, c or java) are compiled then executed.
+Configuration files (extension mcf) are loaded and the file to execute must
+be defined by the 'model' tag (see section 'moseltest tags').
 
 For instance, a test model 'mytest.mos' requiring a data file 'mydata.txt'
 may be stored:
@@ -63,6 +70,9 @@ following contents (please note that unless model parameter KEEPDIR is set
 to 'true' the working directory will be deleted after each completed test run):
 - the program to be tested both in source and compiled form (e.g. mos & bim
   file), or
+- in the case of a model, a copy of the corresponding bim file, or
+- in the case of an application, the expansion of the zip file and a copy of
+  all files located under the directory 'model_resources', or
 - the expansion of the specified archive/directory tree (if any)
 - a valid makefile for the host operating system
 - files 'out.txt' and 'err.txt' (output and error streams of the program).
@@ -71,22 +81,59 @@ The environment variables CLASSPATH and MOSEL_DSO are set as necessary,
 in particular modules and packages are searched for in the current directory
 as well as in a session specific modules directory (see tags 'module' and
 'package' below). The location of this directory is recorded in the
-environment variable DSODIR.
+environment variable DSODIR defined by the model parameter DSODIR (default:"dso").
+The environment variable MOSEL_DSO also includes the content of the parameter
+LIBPATH.
+Thanks to the tag 'save' a test may save a copy of a generated file that can
+be used later by another test defining the 'restore' tag. Files handled by
+this mechanism are collected under the DATADIR directory (default:"data") which
+location is recorded in the DATADIR environment variable.
+Both directories DSODIR and DATADIR are deleted at the end of the testing
+procedure unless KEEPDIR is set to 'true'.
 
 Other configuration settings
 ----------------------------
+Coverage statistics collection
+``````````````````````````````
+'moseltest' may be used to generate coverage statistics of packages, models
+or applications. This mode is enabled by the definition of the parameter COVLST
+that consists in a list of packages/models (no file extension) or
+applications (extension '.zip') separated by spaces.
+The required bim files must be compiled with tracing information (option
+'-G') and be saved under one of the directories included in LIBPATH.
+To locate the corresponding source files 'moseltest' will rely on the
+parameter COVSRC that is initialised by default with LIBPATH.
+In the case of applications it will check first the directory 'source' of
+the zip archive before looking into COVSRC directories.
+
 Report generation settings
 ``````````````````````````
 Unless Teamcity mode is enabled (see below) moseltest generates a report in 
 the file specified via parameter REPFILE or if no specific name is set via 
 this parameter using the base report name from parameter BASEREP, optionally 
 generating a unique report file name by appending a date to it (depending on 
-setting of REPDATES), alternatively appending to or overwriting any existing 
-file of the specified name (setting of REPRESET). 
+setting of REPDATED, with optional formatting via REPDATEFMT), alternatively 
+appending to or overwriting any existing file of the specified name (setting 
+of REPRESET). 
 The report is formatted with the maximum line length specified via LINELEN.
 The parameter SAVELOGS indicates whether to keep logs of successful executions 
 (otherwise only logs of those executions that have resulted in an unexpected 
-error status are kept).
+error status are kept). If a directory for log files is specified via LOGDIR
+along with SAVELOGS set to 'true', then the logs will be copied as individual 
+files per test into the location LOGDIR (similarly to the unique report file,
+the individual filenames can be configured via REPDATED and REPDATEFMT to 
+include a timestamp), otherwise the contents of all files is collected in the 
+REPFILE.
+When generating coverage statistics (parameter COVLST is defined), a summary
+of the statistics is displayed at the end of execution of the testing procedure,
+and the parameter COVREP specifies which additional reports must be produced.
+If the bit 0 (value 1) is set, annotated source files will be produced.
+In this mode a copy of each source file with the extension '.cov' (e.g. mymod.mos.cov)
+is saved into the directory COVDIR (default:"coverage") - in these files each
+line is preceded by the number of times it has been executed.
+If the bit 1 (value 2) of COVREP is set, the file 'moseltest.info' will be saved
+under COVDIR: this file can be used with 'genhtml' from the 'lcov' tool to
+generate an HTML representation of the coverage statistics.
 
 xprmsrv server startup
 ``````````````````````
@@ -172,6 +219,13 @@ module: name of a module.
 	compile this module, rename it according to this tag and save
 	it into the session specific modules directory such that it
 	becomes available for the following tests.
+model: name of a compiled model (no file extension) or an application (ends with '.zip')
+	This tag can only be used in a configuration file (extension .mcf), the
+	"test" is the specified model or application that must be stored in one
+	of the directories stated via LIBPATH.
+parms:  List of parameters passed to the test model. Several 'parms' tags might
+	be stated, the actual parameter string is built by concatenating the
+	different tags.
 compstat: expected compilation status (integer)
 	By default moseltest expects the compilation of a model source to
 	succeed. This tag will be used to test the compiler when a compilation
@@ -194,7 +248,7 @@ runbefore: the name of a file (.mos, .c, .java) that must be run before the
 	the test (e.g. grab some data from an external source) or to
 	check whether the environment is suitable for the test.
 	An exit status of '2' will make 'moseltest' skip the current
-	test and any other non-zero value will be interpreted as a failure
+	test and any other non-zero value will be interpreted as a failure.
 runafter: the name of a file (.mos, .c, .java) that must be run after the
 	main test.
 	This program may be used to validate the execution (e.g. check the
@@ -229,6 +283,21 @@ setenv: define an environment variable for the process running the Mosel
 	When environment variables are defined, the Mosel instance is
 	systematically restarted and terminated at the end of the run
 	(independently of the tags 'restart' and 'newinst').
+save: name of a file to be saved for future use.
+	The operation is performed after execution of the model when it is
+	successful. The file is copied to the directory identified by DATADIR.
+	Several 'save' tags may be stated.
+restore: name of a file to restore from a previous 'save' operation.
+	The file must have been saved by a previous test. The file copy is
+	performed before execution of the test. The file is taken from the
+	directory identified by DATADIR. Several 'restore' tags may be used.
+required: minimum or maximum version number of a component that is required
+	for running a test. Multiple conditions can be stated for the same or
+	different components. The operators '<' and '>' mean '<=' and '>=' 
+	respectively. The extension needs to be specified if a component has
+	both, a DSO and a BIM portion of the same name.
+	Format: mosel|module[.dso]|package[.bim] <|> MM[.mm[.rr]]
+
 
 Usage examples
 --------------
@@ -276,6 +345,32 @@ Here are some examples of how to use the 'moseltest' tags:
  !*! build useful.dso plusplus.bim
  !*! runbefore getit.mos
  !*! runafter verif.mos
+
+- Contents of a .mcf file to run model 'mymodel.bim' (located on the LIBPATH) 
+  setting 2 runtime parameters and checking the produced output (the model 
+  displays the parameter values).
+ !*! model:mymodel
+ !*! parms:Q=3,G='hello'
+ !*! outexpect G=hello
+ !*! outexpect 3
+
+- Contents of an .mcf file to run the compiled .bim contained in the specified
+  Insight app archive, the output file 'usrinputdump.txt' produced by this run
+  is stored for later use by other tests 
+ !*! model:explapp.zip
+ !*! save usrinputdump.txt
+
+  A second .mcf file for the same Insight app may specify a different parameter
+  configuration by which the app reads in the previously saved file that gets
+  copied into the test working directory via 'restore'.
+ !*! model:explapp.zip
+ !*! restore usrinputdump.txt
+ !*! parms:MODE=USRRUN
+
+- Run a test with Mosel versions 5.2-5.6 only, if mmxprs version is at least 3.
+ !*! required:mosel > 5.2, mosel < 5.6
+ !*! required:mmxprs > 3
+
 
 Return value
 ------------

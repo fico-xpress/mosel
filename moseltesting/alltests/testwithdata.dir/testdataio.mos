@@ -1,0 +1,52 @@
+(!*******************************************************
+   Mosel Testing Examples 
+   ====================== 
+ 
+   file testdataio.mos 
+   ``````````````````` 
+   This example shows how to structure test (sub)directories when
+   there are data file(s) that go along with the test program.
+   Given that this subdirectory only contains a single 
+   [Mosel/C/Java/.mcf] file it can be named freely, as there is no 
+   need to distinguish what is the 'main' program.
+
+   It demoes the use of the following 'moseltest' tag:
+   * 'outexpect' checks output produced by this model
+ 
+   author: S.Heipcke, Nov 2022
+
+  (c) Copyright 2022 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+ *******************************************************!)
+!*! outexpect Hello World
+
+model "test reading data"
+ uses "mmsystem"
+
+ parameters
+   FNAME="mydata.dat"
+ end-parameters
+
+ declarations
+   msg: text
+ end-declarations
+
+ initializations from FNAME
+   msg
+ end-initializations
+
+ writeln(msg)
+
+end-model

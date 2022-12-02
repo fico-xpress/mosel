@@ -5,7 +5,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2021 Fair Isaac Corporation
+  (c) Copyright 2015-2022 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -21,18 +21,21 @@
 
 *******************************************************!)
 model moseltest
-version 0.4.5
+version 0.5.5
 uses 'mmsystem','mmjobs'
 
 parameters
  SRCDIR="alltests"  ! Location of the tests or test file
  WKDIR="workdir"    ! Temporary directory for cwd
+ DATADIR="data"     ! Temporary directory for saving data files
  DSODIR="dso"       ! Temporary dso directory
+ LIBPATH=""         ! Paths to additional dso/bim (same syntax as $PATH)
  CONFLINE="!*!"     ! Tag for configuration lines
  ERR="err.txt"      ! Error log file (inside of workdir)
  OUT="out.txt"      ! Output file (inside of workdir)
  BASEREP="report"   ! Report file (after execution, in current directory)
- REPDATED=false     ! Generate unique report file using date
+ REPDATED=false     ! Generate unique report file using timestamp
+ REPDATEFMT=""      ! Timestamp format for dated report files, eg "%.y%0m%0d%0H%0M%0S"
  REPRESET=true      ! Clear report file (false=>append to existing)
  KEEPDIR=false      ! Keep workdir/dsodir at the end of run
  PIDFILE=""         ! PID file for the xprmsrv server (''=>no xprmsrv)
@@ -44,9 +47,17 @@ parameters
  TC=getenv("TEAMCITY_VERSION")<>"" ! Switch to Teamcity messaging
  TCMAXLOG=60000     ! Maximum length of a log file for Teamcity (characters)
  SAVELOGS=false     ! Keep example log even when successful
+ LOGDIR=""          ! If defined, create separate log file per test
+
+ COVLST=""          ! List of package/model/app names for coverage (separated by spaces)
+ COVSRC=""          ! Paths to package/model sources (default: LIBPATH)
+ COVDIR="coverage"  ! Directory where to save coverage reports
+ COVREP=0           ! Format of the reports: 1: annotated source files; 2:lcov info file (3:both)
 end-parameters
 
 declarations
+ DIRSEP=getdirsep
+ PATHSEP=getpathsep
  OPTTYPES:array(OPTNAMES:set of string) of string
  Allfiles:list of text
  MOPT:dynamic array(set of string) of text
@@ -56,7 +67,9 @@ declarations
  nbfail:integer
  nbskipped:integer
  srcdir:text
- excludepat=["*.c9"+getdirsep+"*"]
+ excludepat=["*.c9"+DIRSEP+"*"]
+ pmvers:dynamic array(string) of integer
+ pmvers_txt:dynamic array(string) of text
 
  sysname:string
  sysproc:string
@@ -66,11 +79,27 @@ declarations
  sysnaproc:string
  usenmake:boolean
  repfile:string
+ repdate:text
  env_dsodir:text
+ env_datadir:text
  env_clspath:text
  env_dsopath:text
  env_bimpfx:text
  tplen=LINELEN-22
+
+ s_srcfile=
+	record
+	  path:text
+	  rlines:range
+	  nbl,nblh:integer
+	  lincov:array(range) of integer
+	  nbf,nbfh:integer
+	  fctnames:array(range) of string
+	  fctstart:array(range) of integer
+	end-record
+ srcfiles:dynamic array(allsrc:set of string) of s_srcfile
+ bim_dirs:list of text
+ src_dirs:list of text
 
  public tfile:text
 ! System names:
@@ -88,7 +117,9 @@ forward function dobuild(tobuild:text):boolean
 forward function gettotest(path:text):list of text
 forward procedure cleardir(p:text,rmd:boolean)
 forward procedure copydir(src:text,dst:string)
-forward function findmain(path:text,totest:text):integer
+forward function findmain(wkdir:text,totest:text):integer
+forward function findmodel(wkdir:text,mtt:text):text
+forward function expandapp(wkdir:text,path:text):text
 forward procedure getopts(f:text,opts:array(set of string) of text)
 forward procedure defsetenv
 forward procedure updenv(env:text,spe:set of string)
@@ -96,6 +127,7 @@ forward function expenv(ev:text):text
 forward function toskip(opts:array(set of string) of text,why:text):boolean
 forward function splicfgline(line:text,val:text):string
 forward function filexists(f:text):boolean
+forward function direxists(f:text):boolean
 forward function findpattern(rpat:text,f:text,rtmsg:text):boolean
 forward function splitlist(t:text,sc:integer):list of text
 forward function splitlist(t:text):list of text
@@ -108,14 +140,20 @@ forward procedure startxsrv
 forward procedure stopxsrv
 forward function domake(f:text):boolean
 forward function dorun(f:text):boolean
+forward function getpmvers(p:string):integer
+forward function build_lstdir(srcpath:string):list of text
+forward procedure build_srcfiles(sfs:array(string) of s_srcfile,pkgs:list of text)
+forward procedure savecovres(sfs:array(sf:set of string) of s_srcfile)
+forward procedure reportcov(sfs:array(sf:set of string) of s_srcfile,covdir:text,mode:integer)
 
 forward function tc_fixpath(p:text):text
 forward procedure tc_quote(t:text)
 forward function tc_getfile(f:string):text
 
 ! Known options (types: txt,int,boo,dbl,lst,lns):
-! option lst: same as 'txt' but can appear several times (concatenated)
-! option lns: same as 'txt' but can appear several times (multi lines)
+! option lst: same as 'txt' but can appear several times (concatenated - sep=' ')
+! option lsp: same as 'txt' but can appear several times (concatenated - sep=',')
+! option lns: same as 'txt' but can appear several times (concatenated - sep='\n')
  OPTTYPES("runbefore"):="txt"	! model to run before main - exit 2 to skip test
  OPTTYPES("runafter"):="txt"	! model to run after main test
  OPTTYPES("outexpect"):="lns"	! regex to be found in output stream (in order)
@@ -136,6 +174,11 @@ forward function tc_getfile(f:string):text
  OPTTYPES("only_sys"):="lst"	! list of system names where test is run
  OPTTYPES("setenv"):="lns"	! environment variable [sys.]<env>=<value>
  OPTTYPES("noerrmsg"):="boo"	! if true: error stream must be clear after run
+ OPTTYPES("parms"):="lsp"	! list of parameters passed to the test model
+ OPTTYPES("model"):="txt"	! model to run (valid only in a configuration file)
+ OPTTYPES("save"):="lns"	! save specified file for use by another test
+ OPTTYPES("restore"):="lns"	! restore specified file from a previous test
+ OPTTYPES("required"):="lsp"	! list of packages/modules requited to run the test
  finalise(OPTNAMES)
 
 ! System specific settings
@@ -153,30 +196,51 @@ forward function tc_getfile(f:string):text
  cleardir(WKDIR,false)
  makedir(DSODIR)
  cleardir(DSODIR,false)
+ makedir(DATADIR)
+ cleardir(DATADIR,false)
 
  env_dsodir:=expandpath(DSODIR)
- env_dsopath:=expandpath(WKDIR)+getpathsep+"."+getpathsep+expandpath(DSODIR)
- env_clspath:=expandpath(getenv("XPRESSDIR")+"/lib/xprm.jar")+getpathsep+
-    expandpath(getenv("XPRESSDIR")+"/lib/xprd.jar")+getpathsep+
-    expandpath(getenv("XPRESSDIR")+"/lib/bindrv.jar")+getpathsep+'.'
+ env_datadir:=expandpath(DATADIR)
+ bim_dirs:=build_lstdir(LIBPATH)
+ env_dsopath:=expandpath(WKDIR)+PATHSEP+"."+PATHSEP+jointext(bim_dirs,PATHSEP)+PATHSEP+expandpath(DSODIR)
+ env_clspath:=expandpath(getenv("XPRESSDIR")+"/lib/xprm.jar")+PATHSEP+
+    expandpath(getenv("XPRESSDIR")+"/lib/xprd.jar")+PATHSEP+
+    expandpath(getenv("XPRESSDIR")+"/lib/bindrv.jar")+PATHSEP+'.'
  if KEEPENV then
   env_bimpfx:=getenv("MOSEL_BIM")
   if getenv("MOSEL_DSO")<>"" then
-   env_dsopath+=getpathsep+getenv("MOSEL_DSO")
+   env_dsopath+=PATHSEP+getenv("MOSEL_DSO")
   end-if
  else
   env_bimpfx:=""
  end-if
- defsetenv
 
  if TC then
   writeln("##teamcity[testSuiteStarted name='moseltest-",tc_fixpath(SRCDIR),"']")
  else
   writeln("Moseltest v",getparam("model_version"))
-  writeln("Running Mosel v",getparam("parser_version")," on `",syshost,
+  writeln("Running Mosel v",pmvers_txt('mosel')," on `",syshost,
          "' (",sysname," ",sysarch,"bit)")
   writeln("Tests from ",SRCDIR)
  end-if
+
+ if LOGDIR<>"" and not direxists(LOGDIR) then
+  makepath(LOGDIR)
+  if getsysstat<>0 or not direxists(LOGDIR) then
+   writeln("Failed to create '",LOGDIR,"'!")
+   exit(1)
+  end-if
+ end-if
+
+ if COVLST.size>0 then
+  writeln("Coverage mode enabled")
+  src_dirs:=build_lstdir(if(COVSRC="",LIBPATH,COVSRC))
+  build_srcfiles(srcfiles,splittext(COVLST," "))
+  coverage:=true
+  writeln
+ end-if
+
+ defsetenv
  startxsrv
 
  if not TC then
@@ -219,6 +283,10 @@ forward function tc_getfile(f:string):text
   elif endswith(f,".dir") then
    copydir(srcdir+'/'+f,WKDIR)
    ftype:=findmain(WKDIR,totest)
+  elif endswith(f,".mcf") then
+   fcopy(srcdir+'/'+f,WKDIR)
+   totest:=pathsplit(SYS_FNAME,f)
+   ftype:=3
   else
    if TC then
     writeln("##teamcity[testFailed ",tclabel," message='Unexpected file extention']")
@@ -228,6 +296,13 @@ forward function tc_getfile(f:string):text
    end-if
    nbfail+=1
    next
+  end-if
+
+  if totest.size>0 then
+   getopts(totest,MOPT)
+   if ftype=3 then
+    totest:=findmodel(WKDIR,MOPT("model"))
+   end-if
   end-if
 
   if totest.size<1 then
@@ -240,8 +315,6 @@ forward function tc_getfile(f:string):text
    nbfail+=1
    next
   end-if
-
-  getopts(totest,MOPT)
 
   tcdur:=""
   if toskip(MOPT,reason) then
@@ -280,16 +353,17 @@ forward function tc_getfile(f:string):text
 
  if not TC then
   writeln("-- End of testing procedure --")
-  writeln("Total time: ",gettime-sttime,"s")
+  writeln("Total time: ",formattext("%.3fs",gettime-sttime))
  end-if
 
  disconnect(minst)
  stopxsrv
  if KEEPDIR and Allfiles.size=1 then
-  writeln("Warning: directories '",WKDIR,"' and '",DSODIR,"' are not deleted")
+  writeln("Warning: directories '",WKDIR,"', '",DATADIR,"' and '",DSODIR,"' are not deleted")
  else
   cleardir(WKDIR,true)
   cleardir(DSODIR,true)
+  cleardir(DATADIR,true)
  end-if
 
  if TC then
@@ -302,13 +376,26 @@ forward function tc_getfile(f:string):text
   else
    writeln(Allfiles.size-nbskipped," test was run over a total of ",Allfiles.size)
   end-if
-  if nbfail=1 then
-   writeln("1 test failed. See '",repfile,"' for further details.")
-   exit(1)
-  elif nbfail>1 then
-   writeln(nbfail," tests failed. See '",repfile,"' for further details.")
+  if SAVELOGS then
+   if LOGDIR<>"" then
+    writeln("Log files have been saved under '",LOGDIR,"'.")
+   else
+    writeln("Log files have been saved in '",repfile,"'.")
+   end-if
+  end-if
+  if nbfail>0 then
+   write(nbfail," ",if(nbfail>1,"tests","test")," failed. ")
+   if LOGDIR<>"" then
+    writeln("See log files under '",LOGDIR,"' for further details.")
+   else
+    writeln("See '",repfile,"' for further details.")
+   end-if
    exit(1)
   end-if
+ end-if
+
+ if coverage then
+  reportcov(srcfiles,COVDIR,COVREP)
  end-if
 
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -322,65 +409,115 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
  end-declarations
 
  fflush
- updenv(opts("setenv"),specenv)
- if opts("newinst")="true" and specenv.size<1 then
-  endinstance(true)
- end-if
- startinstance
-
- rbf:=execmos(opts("runbefore"),"")
- if rbf=2 then
-  msg:="Skipped (runbefore)"
-  nbskipped+=1
- elif rbf<>0 then
-  msg:="Failed to run the 'runbefore' model"
-  returned:=true
- elif dobuild(opts("build")) then
-   msg:="Failed to process the build list ("+opts("build")+")"
-   returned:=true
- else
-  tstart:=gettime
-  if ft=0 then					! Mosel file
-   bimfile:=string(copytext(f,1,f.size-4)+".bim")
-   c:=safecompile("g",string(f),bimfile)
-   expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
-   if c<>expstat then
-    msg:="Compilation failed"
-    returned:=true
-   elif c=0 then
-    if opts("componly")<>"true" and opts("package")="" then
-     if(safeload(mdr,bimfile)) then
-      msg:="Failed to load bimfile"
-      returned:=true
-     else
-      run_mdr("")
-      expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
-      expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
-      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
-       msg:="Execution error"
-       returned:=true
-      end-if
-      setparam("ioctrl",true)
-       unload(mdr)
-       asproc(getparam("iostatus"))
-      setparam("ioctrl",false)
-     end-if
-    elif opts("package")<>"" then
-     if not endswith(opts("package"),".bim") then opts("package")+=".bim"; end-if
-     fcopy(WKDIR+"/"+bimfile,DSODIR+"/"+opts("package"))
-    end-if
+ if opts("restore")<>"" then
+  forall(fc in splitlist(opts("restore"),10)) do
+   fcopy(DATADIR+'/'+fc,WKDIR)
+   if getsysstat<>0 then
+     msg:="Failed to restore file '"+fc+"'"
+     returned:=true
+     break
    end-if
-  elif ft=1 then				! C file
-   if opts("module")<>"" then
-    execfile:=string(copytext(f,1,f.size-2)+".dso")
-    if domake(execfile) then
+  end-do
+ end-if
+
+ if not returned then
+  updenv(opts("setenv"),specenv)
+  if opts("newinst")="true" and specenv.size<1 then
+   endinstance(true)
+  end-if
+  startinstance
+
+  rbf:=execmos(opts("runbefore"),"")
+  if rbf=2 then
+   msg:="Skipped (runbefore)"
+   nbskipped+=1
+  elif rbf<>0 then
+   msg:="Failed to run the 'runbefore' model"
+   returned:=true
+  elif dobuild(opts("build")) then
+    msg:="Failed to process the build list ("+opts("build")+")"
+    returned:=true
+  else
+   tstart:=gettime
+   if ft=0 then					! Mosel file
+    bimfile:=string(copytext(f,1,f.size-4)+".bim")
+    c:=safecompile(if(coverage,"G","g"),string(f),bimfile)
+    expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
+    if c<>expstat then
      msg:="Compilation failed"
      returned:=true
-    else
-     fcopy(WKDIR+"/"+execfile,DSODIR+"/"+opts("module"))
+    elif c=0 then
+     if opts("componly")<>"true" and opts("package")="" then
+      if(safeload(mdr,bimfile)) then
+       msg:="Failed to load bimfile"
+       returned:=true
+      else
+       if coverage then
+        setcontrol(mdr,"runmode","2")
+       end-if
+       run_mdr(opts("parms"))
+       expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
+       expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
+       if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
+        msg:="Execution error"
+        returned:=true
+       elif coverage then
+        savecovres(srcfiles)
+       end-if
+       setparam("ioctrl",true)
+        unload(mdr)
+        asproc(getparam("iostatus"))
+       setparam("ioctrl",false)
+      end-if
+     elif opts("package")<>"" then
+      if not endswith(opts("package"),".bim") then opts("package")+=".bim"; end-if
+      fcopy(WKDIR+"/"+bimfile,DSODIR+"/"+opts("package"))
+     end-if
     end-if
-   else
-    execfile:=string(copytext(f,1,f.size-2)+if(sysname="windows",".exe",""))
+   elif ft=3 then					! Bim file
+    bimfile:=string(f)
+    if(safeload(mdr,bimfile)) then
+     msg:="Failed to load bimfile"
+     returned:=true
+    else
+     if coverage then
+      setcontrol(mdr,"runmode","2")
+     end-if
+     run_mdr(opts("parms"))
+     expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
+     expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
+     if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
+      msg:="Execution error"
+      returned:=true
+     elif coverage then
+      savecovres(srcfiles)
+     end-if
+     setparam("ioctrl",true)
+      unload(mdr)
+      asproc(getparam("iostatus"))
+     setparam("ioctrl",false)
+    end-if
+   elif ft=1 then				! C file
+    if opts("module")<>"" then
+     execfile:=string(copytext(f,1,f.size-2)+".dso")
+     if domake(execfile) then
+      msg:="Compilation failed"
+      returned:=true
+     else
+      fcopy(WKDIR+"/"+execfile,DSODIR+"/"+opts("module"))
+     end-if
+    else
+     execfile:=string(copytext(f,1,f.size-2)+if(sysname="windows",".exe",""))
+     if domake(execfile) then
+      msg:="Compilation failed"
+      returned:=true
+     elif dorun(execfile) then
+      msg:="Execution error"
+      returned:=true
+     end-if
+    end-if
+   elif ft=2 then				! Java file
+    execfile:=string(copytext(f,1,f.size-5)+".class")
     if domake(execfile) then
      msg:="Compilation failed"
      returned:=true
@@ -388,70 +525,77 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
      msg:="Execution error"
      returned:=true
     end-if
-   end-if
-  elif ft=2 then				! Java file
-   execfile:=string(copytext(f,1,f.size-5)+".class")
-   if domake(execfile) then
-    msg:="Compilation failed"
-    returned:=true
-   elif dorun(execfile) then
-    msg:="Execution error"
-    returned:=true
-   end-if
-  else
-   msg:="Unknown file format"
-   returned:=true
-  end-if
-
-  if minst.status<>0 then
-   msg:="Mosel crashed"
-   returned:=true
-  end-if
-
-  if not returned and execmos(opts("runafter"),"")<>0 then
-   msg:="Failed to run the 'runafter' model"
-   returned:=true
-  end-if
-
-  if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtmsg) then
-   msg:=text("Failed to validate 'outexpect' (")+rtmsg+")"
-   returned:=true
-  end-if
-  if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtmsg) then
-   msg:=text("Failed to validate 'errexpect' (")+rtmsg+")"
-   returned:=true
-  end-if
-  if not returned and opts("noerrmsg")="true" and getfsize(WKDIR+"/"+ERR)>0 then
-   msg:="Error messages have been displayed"
-   returned:=true
-  end-if
-
-  if not returned then
-   if TC then
-    msg:=formattext("%.0f",(gettime-tstart)*1000)
    else
-    msg:=formattext("Done in %.3fs",gettime-tstart)
+    msg:="Unknown file format"
+    returned:=true
+   end-if
+
+   if minst.status<>0 then
+    msg:="Mosel crashed"
+    returned:=true
+   end-if
+
+   if not returned and execmos(opts("runafter"),"")<>0 then
+    msg:="Failed to run the 'runafter' model"
+    returned:=true
+   end-if
+
+   if not returned and opts("save")<>"" then
+    forall(fc in splitlist(opts("save"),10)) do
+     fcopy(WKDIR+"/"+fc,DATADIR)
+     if getsysstat<>0 then
+      msg:="Failed to save '"+fc+"'"
+      returned:=true
+      break
+     end-if
+    end-do
+   end-if
+
+   if not returned and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtmsg) then
+    msg:=text("Failed to validate 'outexpect' (")+rtmsg+")"
+    returned:=true
+   end-if
+   if not returned and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtmsg) then
+    msg:=text("Failed to validate 'errexpect' (")+rtmsg+")"
+    returned:=true
+   end-if
+   if not returned and opts("noerrmsg")="true" and getfsize(WKDIR+"/"+ERR)>0 then
+    msg:="Error messages have been displayed"
+    returned:=true
+   end-if
+
+   if not returned then
+    if TC then
+     msg:=formattext("%.0f",(gettime-tstart)*1000)
+    else
+     msg:=formattext("Done in %.3fs",gettime-tstart)
+    end-if
    end-if
   end-if
- end-if
 
- if specenv.size>0 then
-  forall(s in specenv)
-   setenv(s,"")
-  defsetenv             ! Restore defaults
-  endinstance(true)
- else
-  endinstance(opts("restart")="true")
+  if specenv.size>0 then
+   forall(s in specenv)
+    setenv(s,"")
+   defsetenv             ! Restore defaults
+   endinstance(true)
+  else
+   endinstance(opts("restart")="true")
+  end-if
+
+  if not returned and minst.status=-3 then
+   msg:="Abnormal instance termination"
+   returned:=true
+  end-if
  end-if
 end-function
 
-!+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 !****************************************
 !* Prepare the Mosel instance for a run
 !****************************************
 procedure startinstance
  if minst.status<>0 then
-  valgrind:=if(VALGRIND,'valgrind ','')
+  valgrind:=if(VALGRIND,'valgrind --num-callers=20 ','')
   if connect(minst,'rcmd:'+valgrind+'mosel -r -d "'+expandpath(WKDIR)+
                                    '" -dp "'+env_dsopath+'"')<>0  then
    writeln("Fatal error: failed to start Mosel instance")
@@ -557,10 +701,10 @@ function gettotest(path:text):list of text
  declarations
   f:text
   lsf:list of text
-  allexcludepat=["*.dir"+getdirsep+"*"]+excludepat
+  allexcludepat=["*.dir"+DIRSEP+"*"]+excludepat
  end-declarations
 
- while (path.size>1 and endswith(path,getdirsep))
+ while (path.size>1 and endswith(path,DIRSEP))
   deltext(path,path.size,path.size)
 
  if filexists(path) then
@@ -570,7 +714,7 @@ function gettotest(path:text):list of text
   f:=pathsplit(SYS_FNAME,path,path)
   returned:=[f]
  else
-  findfiles(SYS_RECURS+SYS_NODIR,lsf,path,"*.mos|*.c|*.java|*.zip|*.tar|*.tgz|*.tar.gz")
+  findfiles(SYS_RECURS+SYS_NODIR,lsf,path,"*.mos|*.c|*.java|*.zip|*.tar|*.tgz|*.tar.gz|*.mcf")
   forall(l in lsf)
    if and(pat in allexcludepat) not pathmatch(l,pat) then
     returned+=[l]
@@ -591,7 +735,6 @@ end-function
 procedure cleardir(p:text,rmd:boolean)
  declarations
   lsf:list of text
-  err:integer
  end-declarations
 
  if minst.status=0 then
@@ -601,7 +744,7 @@ procedure cleardir(p:text,rmd:boolean)
    ! 'flushdso' available in Mosel 3.13.1 and newer
    setparam("ioctrl",true)
     setcontrol(minst,"flushdso","")
-    dummy:=getparam("iostatus")
+    asproc(getparam("iostatus"))
    setparam("ioctrl",false)
   end-if
  end-if
@@ -656,7 +799,7 @@ end-procedure
 !**************************************
 !* Find the "main" file in a directory
 !**************************************
-function findmain(path:text,totest:text):integer
+function findmain(wkdir:text,totest:text):integer
  declarations
   lsf:list of text
  end-declarations
@@ -664,19 +807,65 @@ function findmain(path:text,totest:text):integer
  totest:=""
  returned:=-1
 
- findfiles(SYS_NODIR,lsf,path,"main.mos|main.c|Main.java|main.java")
+ findfiles(SYS_NODIR,lsf,wkdir,"main.mos|main.c|Main.java|main.java|main.mcf")
  if lsf.size<>1 then
   lsf:=[]
-  findfiles(SYS_NODIR,lsf,path,"*.mos|*.c|*.java")
+  findfiles(SYS_NODIR,lsf,wkdir,"*.mos|*.c|*.java|*.mcf")
  end-if
 
  if lsf.size=1 then
   totest:=lsf.first
-  forall(e in [".mos",".c",".java"],i as counter)
+  forall(e in [".mos",".c",".java",".mcf"],i as counter)
    if endswith(totest,e) then
     returned:=i-1
     break
    end-if
+ end-if
+end-function
+
+!******************************************
+!* Find the model file of a configuration
+!******************************************
+function findmodel(wkdir:text,mtt:text):text
+ if mtt<>"" then
+  if not endswith(mtt,".bim") and not endswith(mtt,".zip") then
+   mtt+=".bim"
+  end-if
+  forall(pfx in bim_dirs) do
+   path:=expandpath(pfx+DIRSEP+mtt)
+   if filexists(path) then
+    if endswith(mtt,".zip") then
+     returned:=expandapp(wkdir,path)
+    else
+     fcopy(path,wkdir)
+     returned:=mtt
+    end-if
+    break
+   end-if
+  end-do
+ end-if
+end-function
+
+!***********************************
+!* Expand an application zip-file
+!***********************************
+function expandapp(wkdir:text,path:text):text
+ declarations
+  lsf:list of text
+ end-declarations
+
+ unzip(path,wkdir)
+ if getsysstat<>0 then
+  writeln("Failed to extract zip file '",path,"'")
+ else
+  findfiles(SYS_NODIR,lsf,wkdir,"*.bim")
+  if lsf.size=1 then
+   returned:=lsf(1)
+   reset(lsf)
+   findfiles(SYS_NODIR,lsf,wkdir,"model_resources/*")
+   forall(f in lsf)
+    fcopy(wkdir+DIRSEP+f,wkdir)
+  end-if
  end-if
 end-function
 
@@ -701,6 +890,8 @@ procedure getopts(f:text,opts:array(set of string) of text)
      delcell(opts(parm))
     elif OPTTYPES(parm)='lst' and opts(parm).size>0 then
      opts(parm)+=' '+val
+    elif OPTTYPES(parm)='lsp' and opts(parm).size>0 then
+     opts(parm)+=','+val
     elif OPTTYPES(parm)='lns' and opts(parm).size>0 then
      opts(parm)+="\n"+val
     else
@@ -720,13 +911,14 @@ end-procedure
 !************************************
 procedure defsetenv
  setenv("DSODIR",env_dsodir)
+ setenv("DATADIR",env_datadir)
  setenv("MOSEL_DSO",env_dsopath)   ! For submodels created by worker
  setenv("MOSEL_BIM",env_bimpfx)    ! For submodels created by worker
  setenv("CLASSPATH",env_clspath)
 end-procedure
 
 !**********************************
-!* Update environment is requested
+!* Update environment if requested
 !**********************************
 procedure updenv(env:text,spe:set of string)
  declarations
@@ -790,6 +982,10 @@ end-function
 !* Check whether a test should be skipped
 !*****************************************
 function toskip(opts:array(set of string) of text,why:text):boolean
+ declarations
+  mp:array(0..3) of textarea
+ end-declarations
+
  if opts("skip")="true" then
   why:="disabled"
   returned:=true
@@ -801,7 +997,7 @@ function toskip(opts:array(set of string) of text,why:text):boolean
     returned:=true
    end-if
   end-if
-  if opts("skip_sys")<>"" then
+  if not returned and opts("skip_sys")<>"" then
    lsn:=splitset(opts("skip_sys"))
    if sysname in lsn or sysnaarch in lsn or 
       sysproc in lsn or sysnaproc in lsn then
@@ -809,20 +1005,48 @@ function toskip(opts:array(set of string) of text,why:text):boolean
     returned:=true
    end-if
   end-if
-  if opts("only_host")<>"" then
+  if not returned and opts("only_host")<>"" then
    lsn:=splitset(opts("only_host"))
    if syshost not in lsn then
     why:="on this host"
     returned:=true
    end-if
   end-if
-  if opts("only_sys")<>"" then
+  if not returned and opts("only_sys")<>"" then
    lsn:=splitset(opts("only_sys"))
    if sysname not in lsn and sysnaarch not in lsn and
       sysproc not in lsn and sysnaproc not in lsn  then
     why:="on this system"
     returned:=true
    end-if
+  end-if
+  if not returned and opts("required")<>"" then
+   forall(p in splittext(opts("required"),","))
+    if regmatch(p,' *\([-_.a-zA-Z0-9]*\) *\([<>]\) *\([0-9][0-9.]*\)',1,0,mp) then
+     m:=string(copytext(p,mp(1)))
+     mv:=copytext(p,mp(3))
+     d:=copytext(p,mp(2))
+     v:=getpmvers(m)
+     if v<0 then
+      why:=text("missing '")+m+"'"
+      returned:=true
+     else
+      reset(mp)
+      if regmatch(mv,'\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
+       mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000+parseint(mv,mp(3))
+      elif regmatch(mv,'\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
+       mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000
+      else
+       mvn:=parseint(mv,1)*1000000
+      end-if
+      if (d=">" and v<mvn) or (d="<" and v>mvn) then
+       why:="incompatible version of '"+m+"' ("+pmvers_txt(m)+d+mv+")"
+       returned:=true
+      end-if
+     end-if
+    else
+     writeln("Malformed 'required' tag '",p,"' (ignored)")
+    end-if
   end-if
  end-if
 end-function
@@ -833,7 +1057,6 @@ end-function
 function splicfgline(line:text,val:text):string
  declarations
   mp:array(0..2) of textarea
-  iv:integer
   dv:real
  end-declarations
  trim(line)
@@ -883,6 +1106,17 @@ function filexists(f:text):boolean
  fstat:=getfstat(f)
  if fstat<>0 then
   returned:=bittest(fstat,SYS_TYP)=SYS_REG and bittest(fstat,SYS_MOD)>=SYS_READ
+ ! else: returned:=false
+ end-if
+end-function
+
+!****************************************************
+!* Check whether a file exists and is a directory
+!****************************************************
+function direxists(f:text):boolean
+ fstat:=getfstat(f)
+ if fstat<>0 then
+  returned:=bittest(fstat,SYS_TYP)=SYS_DIR and bittest(fstat,SYS_MOD)>=SYS_READ
  ! else: returned:=false
  end-if
 end-function
@@ -970,6 +1204,9 @@ end-function
 !* Save log files
 !******************
 procedure savelogs(f:text,tcl:text)
+ declarations
+  lfname: text
+ end-declarations
  if TC then
   if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
    writeln("##teamcity[testStdOut ",tcl," out='",tc_getfile(WKDIR+"/"+OUT),"']")
@@ -978,19 +1215,40 @@ procedure savelogs(f:text,tcl:text)
    writeln("##teamcity[testStdErr ",tcl," out='",tc_getfile(WKDIR+"/"+ERR),"']")
   end-if
  end-if
- fopen(repfile,F_OUTPUT+F_APPEND)
- writeln("+"*78)
- writeln(if(f.size<77,"="*(77-f.size),text("=="))," ",f)
- if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
-  writeln("==== ","output"," ====")
- end-if
- fclose(F_OUTPUT)
- fcopy(WKDIR+"/"+OUT,F_SILENT,repfile,F_APPEND)
- if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+ if LOGDIR="" then
   fopen(repfile,F_OUTPUT+F_APPEND)
-  writeln("==== ","error"," ====")
+  writeln("+"*78)
+  writeln(if(f.size<77,"="*(77-f.size),text("=="))," ",f)
+  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+   writeln("==== ","output"," ====")
+  end-if
   fclose(F_OUTPUT)
-  fcopy(WKDIR+"/"+ERR,F_SILENT,repfile,F_APPEND)
+  fcopy(WKDIR+"/"+OUT,F_SILENT,repfile,F_APPEND)
+  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+   fopen(repfile,F_OUTPUT+F_APPEND)
+   writeln("==== ","error"," ====")
+   fclose(F_OUTPUT)
+   fcopy(WKDIR+"/"+ERR,F_SILENT,repfile,F_APPEND)
+  end-if
+ else
+  ff:=copytext(f,1,f.size)
+  asproc(regreplace(ff,'([/:\\])',"_",1,REG_EXTENDED))
+  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+    lfname:=OUT
+    if repdate<>"" then
+      asproc(pathsplit(SYS_EXTN,lfname,lfname))
+      lfname+=repdate+".txt"
+    end-if
+    fcopy(WKDIR+"/"+OUT,LOGDIR+"/"+ff+"_"+lfname)
+  end-if
+  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+    lfname:=ERR
+    if repdate<>"" then
+      asproc(pathsplit(SYS_EXTN,lfname,lfname))
+      lfname+=repdate+".txt"
+    end-if
+    fcopy(WKDIR+"/"+ERR,LOGDIR+"/"+ff+"_"+lfname)
+  end-if
  end-if
 end-procedure
 
@@ -1005,6 +1263,9 @@ procedure setsysdep
  sysnaproc:=sysname+"-"+sysproc
  syshost:=getsysinfo(SYS_NODE)
 
+ asproc(getpmvers('mosel'))
+ pmvers(""):=-1
+
  if sysname="windows" then
    ! use nmake if it is available
    fopen("null:",F_OUTPUT)
@@ -1018,12 +1279,14 @@ procedure setsysdep
    end-if
  end-if
 
+ if REPDATED then
+  if REPDATEFMT<>"": localsetparam("datetimefmt",REPDATEFMT)
+  repdate:=text("_")+text(datetime(SYS_NOW))
+ end-if
  if REPFILE<>"" then
   repfile:=REPFILE
- elif REPDATED then
-  repfile:=BASEREP+"_"+string(date(SYS_NOW))+".txt"
  else
-  repfile:=BASEREP+".txt"
+  repfile:=BASEREP+repdate+".txt"
  end-if
  if REPRESET then
   fdelete(repfile)
@@ -1125,9 +1388,8 @@ end-procedure
 !* Load a model on 'minst' "safely"
 !************************************
 function safeload(m:Model,bf:string):boolean
- setparam("ioctrl",true)
-  load(minst,m,bf)
- setparam("ioctrl",false)
+ localsetparam("ioctrl",true)
+ load(minst,m,bf)
  returned:= getparam("iostatus")<>0
 end-function
 
@@ -1135,10 +1397,9 @@ end-function
 !* Compile a model on 'minst' "safely"
 !***************************************
 function safecompile(opts:string,src:string,dst:string):integer
- setparam("ioctrl",true)
-  returned:=compile(minst,opts,src,dst)
- setparam("ioctrl",false)
- dummy:=getparam("iostatus")
+ localsetparam("ioctrl",true)
+ returned:=compile(minst,opts,src,dst)
+ asproc(getparam("iostatus"))
 end-function
 
 !***************************
@@ -1241,11 +1502,520 @@ DOMAKE`)
    todo:=text('java -d')+sysarch+" -enableassertions "+copytext(f,1,f.size-6)
   end-if
  else
-  todo:='.'+getdirsep+f
+  todo:='.'+DIRSEP+f
  end-if
  returned:=execmos("rmt:tmp:dorun.mos",text("TODO='")+todo+"'")<>0
 end-function
 
+!*************************************************
+!* Retrieve the version of a pkg/module or Mosel
+!*************************************************
+function getpmvers(p:string):integer
+ declarations
+  line:text
+  mp:dynamic array(0..3) of textarea
+ end-declarations
+ if not exists(pmvers(p)) then
+  fopen("null:",F_ERROR) ! in case component cannot be found
+  fopen("tmp:vers",F_OUTPUT)
+  if p="mosel" then
+   system('mosel','exam','-l','en','-dp',env_dsopath,'-H')
+  else
+   system('mosel','exam','-l','en','-dp',env_dsopath,'-H',p)
+  end-if
+  fclose(F_OUTPUT)
+  fclose(F_ERROR)
+  fopen("tmp:vers",F_INPUT)
+  if readtextline(line)>10 and regmatch(line,'^[a-zA-Z]* .* version \([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
+   pmvers(p):=parseint(line,mp(1))*1000000+parseint(line,mp(2))*1000+parseint(line,mp(3))
+   pmvers_txt(p):=copytext(line,mp(1).start,mp(3).succ-1)
+   if findtext(p,".",1)=0 then
+    if startswith(line,"Package") then
+     pmvers(p+".bim"):=pmvers(p)
+    elif startswith(line,"Module") then
+     pmvers(p+".dso"):=pmvers(p)
+    end-if
+   end-if
+  else
+   pmvers(p):=-1
+  end-if
+  fclose(F_INPUT)
+ end-if
+ returned:=pmvers(p)
+end-function
+
+!++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+declarations
+ function checkpackage(scs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
+ procedure compcov(sfs:array(sf:set of string) of s_srcfile)
+ procedure genreport(srcf:s_srcfile,src:string,covdir:text)
+ procedure genlcovinfo(scs:array(sf:set of string) of s_srcfile,covdir:text)
+ function addsrcfile(scs:array(string) of s_srcfile,src:string,appzip:text):boolean
+ function countlines(f:text):integer
+ function findsrc(f:string,appzip:text):text
+ function lndx2file(l:integer):integer
+ function lndx2line(l:integer):integer
+end-declarations
+
+!****************************************************
+! Generate a list of directories from parameter
+!****************************************************
+function build_lstdir(srcpath:string):list of text
+ returned:=splittext(srcpath,PATHSEP)
+ if returned.size>0 then
+  forall(p in returned) do
+   p:=expandpath(p)
+  end-do
+ else
+  returned:=[expandpath(".")]
+ end-if
+end-function
+
+!****************************************************
+! Generate srcfiles from parameter
+!****************************************************
+procedure build_srcfiles(sfs:array(sf:set of string) of s_srcfile,pkgs:list of text)
+ declarations
+  allpkgs:set of constant text
+  lsf:list of string
+  ft:text
+ end-declarations
+
+ startinstance
+ forall(p in pkgs) do
+  trim(p)
+  if p<>"" and p not in allpkgs and checkpackage(sfs,p,lsf,ft) then
+   writeln(" + ",ft," '",p,"' registered ",lsf)
+   allpkgs+={p}
+  end-if
+ end-do
+ cleardir(WKDIR,false)
+ endinstance(true)
+
+ if sf.size=0 then
+  writeln("No package for coverage: aborting")
+  exit(3)
+ end-if
+end-procedure
+
+!****************************************************
+!* Save coverage data from mdr on minst
+!****************************************************
+procedure savecovres(sfs:array(sf:set of string) of s_srcfile)
+ declarations
+  Rlines:range
+  lines:array(Rlines) of integer
+  iters:array(Rlines) of integer
+  Rfiles:range
+  files:array(Rfiles) of string
+  Rstarts:range
+  starts:array(Rstarts) of integer
+ end-declarations
+
+ localsetparam("ioctrl",true)
+ nid:=getid(minst)
+ initialisations from "bin:rmt:["+nid+"]mcmd:covres@1"
+  Rlines lines iters
+  Rfiles files
+  Rstarts starts
+ end-initialisations
+ if getparam("iostatus")=0 then
+  forall(f in 0..(getlast(Rstarts)-1)|files(f) in sf)
+   with srcf=sfs(files(f)) do
+    forall(i in starts(f)..(starts(f+1)-1),l=lines(i))
+     if l in srcf.rlines and srcf.lincov(l)>=0 then
+      srcf.lincov(l)+=iters(i)
+     end-if
+   end-do
+ end-if
+end-procedure
+
+!****************************************************
+!* Compute and report coverage statistics
+!****************************************************
+procedure reportcov(sfs:array(sf:set of string) of s_srcfile,covdir:text,mode:integer)
+ compcov(sfs)
+ localsetparam("realfmt","%.1f")
+ writeln("\nGlobal coverage statistics:")
+ snbl:=sum(s in sf) sfs(s).nbl
+ snblh:=sum(s in sf) sfs(s).nblh
+ snbf:=sum(s in sf) sfs(s).nbf
+ snbfh:=sum(s in sf) sfs(s).nbfh
+ writeln("  lines:    ",snblh*100/snbl,"% (",snblh,"/",snbl,")")
+ if snbf>0 then
+  writeln("  routines: ",snbfh*100/snbf,"% (",snbfh,"/",snbf,")")
+ end-if
+
+ if mode<>0 then
+  makedir(covdir)
+  writeln("Saving reports in '",covdir,"':")
+  if bittest(mode,1)=1 then
+   forall(s in sf)
+    genreport(sfs(s),s,covdir)
+  end-if
+  if bittest(mode,2)=2 then
+   genlcovinfo(sfs,covdir)
+  end-if
+ end-if
+end-procedure
+
+!****************************************************
+! Load a model/package and extract source information
+!****************************************************
+function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
+ declarations
+  appzip:text
+  path:text
+  nbs:integer
+  newfiles,oldfiles:set of string
+
+  Rfiles: range
+  files:  array(Rfiles) of string
+  Rlines: range
+  lines:  array(Rlines) of integer
+
+  Rsign: range
+  sign:  array(Rsign) of text
+  lndx:  array(Rsign) of integer
+  name:  array(Rsign) of text
+ end-declarations
+
+ reset(lsf)
+ ft:="Package"
+ nid:=getid(minst)
+ forall(pfx in bim_dirs) do
+  if endswith(pkg,".zip") then
+   path:=expandpath(pfx+DIRSEP+pkg)
+   appzip:=path
+  else
+   path:=expandpath(pfx+DIRSEP+pkg+".bim")
+   appzip:=""
+  end-if
+  if filexists(path) then
+   break
+  else
+   path:=""
+  end-if
+ end-do
+ if path.size>0 then
+  localsetparam("ioctrl",true)
+  if appzip<>"" then
+   cleardir(WKDIR,false)
+   bimfile:=expandpath(WKDIR+DIRSEP+expandapp(WKDIR,path))
+   load(minst,mdr,bimfile,"l","","","")
+  else
+   load(minst,mdr,path,"l","","","")
+  end-if
+  if getparam("iostatus")=0 then
+   if findtext(getmodprop(mdr,PROP_SYSCOM),"PKG,",1)<1 then
+    ft:=if(appzip="","Model","Application")
+   end-if
+   initialisations from "bin:rmt:["+nid+"]mcmd:dbglndx@1"
+    Rfiles files
+    Rlines lines
+   end-initialisations
+   if getparam("iostatus")=0 and Rfiles.size>0 and 
+      findtext(getmodprop(mdr,PROP_SYSCOM),",trace,",1)>0 then
+    oldfiles:=sf
+    forall(j in Rfiles)
+     if endswith(files(j),".mos") and addsrcfile(sfs,files(j),appzip) then
+      lsf+=[files(j)]
+      nbs+=1
+     end-if
+
+    if nbs<1 then
+     writeln(" I could not find any valid source file for '",pkg,"'!!!")
+    else
+     newfiles:=sf-oldfiles
+     ! locate effective statements
+     forall(i in Rlines,f=lndx2file(lines(i))| files(f) in newfiles)
+      with s=sfs(files(f)),l=lndx2line(lines(i)) do
+       if l in s.rlines then
+        s.lincov(l):=0
+	s.nbl+=1
+       end-if
+      end-do
+    
+     ! record subroutines names & location
+     fopen("null:",F_ERROR) ! may fail if there is no subroutine
+     initialisations from "bin:rmt:["+nid+"]mcmd:dbgflndx@1"
+      Rsign sign lndx name
+     end-initialisations
+     fclose(F_ERROR)
+     if getparam("iostatus")=0 and Rsign.size>0 then
+      forall(i in Rsign, ld=lndx(i), f=lndx2file(lines(ld))|files(f) in newfiles)
+       with s=sfs(files(f)),l=lndx2line(lines(ld)) do
+        if l in s.rlines then
+         s.nbf+=1
+         if sign(i)<>"" then
+          s.fctnames(s.nbf):=string(name(i)+"("+sign(i)+")")
+         else
+          s.fctnames(s.nbf):=string(name(i))
+         end-if
+         s.fctstart(s.nbf):=l
+        end-if
+       end-do
+     end-if
+     returned:=true
+    end-if
+   else
+    writeln(" No tracing information found in '",pkg,"'!!!")
+   end-if
+  else
+   writeln(" Failed to load '",path,"'!!!")
+  end-if
+  unload(mdr)
+ else
+  writeln(" Package '",pkg,"' not found!!!")
+ end-if
+end-function
+
+!****************************************************
+!* Compute coverage statistics summary
+!****************************************************
+procedure compcov(sfs:array(sf:set of string) of s_srcfile)
+  forall(s in sf,srcf=sfs(s)) do
+   srcf.nblh:=0
+   forall(i in srcf.rlines)
+    if srcf.lincov(i)>0 then srcf.nblh+=1; end-if
+   srcf.nbfh:=0
+   forall(f in srcf.fctstart.index(1),lc=srcf.lincov(srcf.fctstart(f)))
+    if lc>0 then srcf.nbfh+=1; end-if
+  end-do
+end-procedure
+
+!****************************************************
+!* Generate a report for a source file
+!****************************************************
+procedure genreport(srcf:s_srcfile,src:string,covdir:text)
+ declarations
+  repfile:text
+  l:text
+  spc=" "*7
+  tsrc:text
+ end-declarations
+
+ tsrc:=src
+ asproc(regreplace(tsrc,"/","_"))
+ asproc(regreplace(tsrc,'\\',"_"))
+ asproc(regreplace(tsrc,':',"_"))
+ asproc(regreplace(tsrc,';',"_"))
+ tsrc+=".cov"
+ localsetparam("ioctrl",true)
+ repfile:=covdir+DIRSEP+tsrc
+ fd:=getfid(F_OUTPUT)
+ fopen(repfile,F_OUTPUT)
+ if getparam("iostatus")<>0 then
+  writeln(" I cannot create the report file '",repfile,"'!!!")
+ else
+  fopen(srcf.path,F_INPUT)
+  if getparam("iostatus")<>0 then
+   fwriteln(fd," I cannot find source file '",src,"'!!!")
+  else
+   if srcf.nbf>0 then
+    fwriteln(fd," + '",tsrc+"' (l:",srcf.nblh*100/srcf.nbl,
+ 				        "%,",srcf.nblh,"/",srcf.nbl,
+					" r:",srcf.nbfh*100/srcf.nbf,
+ 				        "%,",srcf.nbfh,"/",srcf.nbf,")")
+   else
+    fwriteln(fd," + '",tsrc+"' (l:",srcf.nblh*100/srcf.nbl,
+ 				        "%,",srcf.nblh,"/",srcf.nbl,")")
+   end-if
+   forall(i in srcf.rlines)
+    if readtextline(l)>0 then
+     if srcf.lincov(i)>=0 then
+      write(textfmt(srcf.lincov(i),4),"   ",l)
+     else
+      write(spc,l)
+     end-if
+    else
+     break
+    end-if
+   localsetparam("realfmt","%.1f")
+   writeln("\nCoverage: ")
+   writeln("  lines:    ",srcf.nblh*100/srcf.nbl,"% (",srcf.nblh,"/",srcf.nbl,")")
+   if srcf.nbf>0 then
+    writeln("  routines: ",srcf.nbfh*100/srcf.nbf,"% (",srcf.nbfh,"/",srcf.nbf,")")
+   end-if
+   fclose(F_INPUT)
+  end-if
+  fclose(F_OUTPUT)
+ end-if
+end-procedure
+
+!****************************************************
+!* Generate the report as an lcov info file
+!****************************************************
+procedure genlcovinfo(sfs:array(sf:set of string) of s_srcfile,covdir:text)
+ declarations
+  repfile:text
+  appdir:text
+ end-declarations
+
+ fd:=getfid(F_OUTPUT)
+ localsetparam("ioctrl",true)
+ repfile:=covdir+DIRSEP+"moseltest.info"
+ fopen(text("enc:sys+unix,")+repfile,F_OUTPUT)
+ if getparam("iostatus")<>0 then
+  writeln(" I cannot create the report file '",repfile,"'!!!")
+ else
+  fwriteln(fd," + 'moseltest.info'")
+  writeln("TN:moseltest")
+  forall(s in sf,srcf=sfs(s)) do
+   if startswith(srcf.path,"zlib.zip:") then
+    if appdir="" then
+     appdir:=expandpath(covdir+DIRSEP+"appsrc")
+     makedir(appdir)
+     appdir+=DIRSEP
+    end-if
+    fname:=appdir+pathsplit(SYS_FNAME,s)
+    fcopy(srcf.path,fname)
+    writeln("SF:",fname)
+   else
+    writeln("SF:",srcf.path)
+   end-if
+   forall(f in srcf.fctstart.index(1))
+    writeln("FN:",srcf.fctstart(f),",",srcf.fctnames(f))
+   forall(f in srcf.fctstart.index(1),lc=srcf.lincov(srcf.fctstart(f))) do
+    writeln("FNDA:",lc,",",srcf.fctnames(f))
+   end-do
+   writeln("FNF:",srcf.nbf)
+   writeln("FNH:",srcf.nbfh)
+
+   forall(i in srcf.rlines,lc=srcf.lincov(i)|lc>=0,nbl as counter) do
+    writeln("DA:",i,",",lc)
+   end-do
+   writeln("LH:",srcf.nblh)
+   writeln("LF:",srcf.nbl)
+   writeln("end_of_record")
+  end-do
+  fclose(F_OUTPUT)
+  writeln(" To produce a HTML report use the following comand:")
+  writeln("  genhtml -o ",covdir,DIRSEP,"html ",covdir,DIRSEP,"moseltest.info")
+ end-if
+end-procedure
+
+!****************************************************
+!* Add a new file to the array of source files
+!****************************************************
+function addsrcfile(sfs:array(sf:set of string) of s_srcfile,src:string,appzip:text):boolean
+ declarations
+  path:text
+  src2:text
+ end-declarations
+
+ if src in sf then
+  returned:=true
+ else
+  path:=findsrc(src,appzip)
+  if path="" then
+   src2:=pathsplit(SYS_FNAME,src)
+   if src2<>src then
+    path:=findsrc(string(src2),appzip)
+   end-if
+  end-if
+  if path="" then
+   writeln(" Cannot find source file '",src,"'!!!")
+  else
+   nbl:=countlines(path)
+   if nbl<1 then
+    writeln(" Source file '",src,"' is empty!!!")
+   else
+    create(sfs(src))
+    with srcf=sfs(src) do
+     srcf.path:=path
+     srcf.rlines:=1..nbl
+     finalise(srcf.rlines)
+     srcf.lincov(1):=-1
+     srcf.lincov(nbl):=-1
+     finalise(srcf.lincov.index(1))
+     forall(i in srcf.rlines)
+      srcf.lincov(i):=-1
+    end-do
+    returned:=true
+   end-if
+  end-if
+ end-if
+end-function
+
+!****************************************************
+!* Try to find a source file
+!****************************************************
+function findsrc(f:string,appzip:text):text
+ declarations
+  lsf:list of text
+ end-declarations
+
+ if (sysname="windows" and f.size>2 and 
+     (startswith(f,'\\') or getchar(f,2)=58)) or
+    (sysname<>"windows" and getchar(f,1)=47) then
+  if filexists(f) then
+   returned:=f
+  end-if
+ else
+  if returned="" and appzip<>"" then
+   ! the zip file has been expanded in WKDIR
+   findfiles(SYS_RECURS+SYS_NODIR,lsf,WKDIR+DIRSEP+"source",f)
+   if lsf.size=1 then
+    returned:=text("zlib.zip:"+appzip+",source/"+tc_fixpath(f))
+   end-if
+  end-if
+
+  if returned="" then
+   forall(p in src_dirs) do
+    returned:=p+DIRSEP+f
+    if filexists(returned) then
+     break
+    else
+     returned:=""
+    end-if
+   end-do
+  end-if
+ end-if
+end-function
+
+!****************************************************
+! Count the number of lines of a file
+!****************************************************
+function countlines(f:text):integer
+ declarations
+  l:text
+ end-declarations
+ localsetparam("ioctrl",true)
+ fopen(f,F_INPUT)
+ if getparam("iostatus")=0 then
+  while(readtextline(l)>0) do
+   returned+=1
+  end-do
+ fclose(F_INPUT)
+ else
+  returned:=-1
+ end-if
+end-function
+
+!****************************************************
+!* Extract the file number form an lndx
+!****************************************************
+function lndx2file(l:integer):integer
+ declarations
+  FILESHIFT=-24
+ end-declarations
+
+ returned:=bitshift(l,FILESHIFT)
+end-function
+
+!****************************************************
+!* Extract the line number from an lndx
+!****************************************************
+function lndx2line(l:integer):integer
+ declarations
+  LINEMASK=16777215
+ end-declarations
+
+ returned:=bittest(l,LINEMASK)
+end-function
+
+!++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 !*****************************************************
 !* Make sure a path uses '/' for directory separation
 !*****************************************************

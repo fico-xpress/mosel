@@ -1,0 +1,59 @@
+(!*******************************************************
+   Mosel Testing Examples 
+   ====================== 
+ 
+   file testpackage.mos 
+   ```````````````````` 
+   This file demoes the use of various 'moseltest' tags
+   and how to run a submodel with a package file:
+   * 'build' compiles the package file that is used by a submodel
+   * 'parms' specifies a new value for the runtime parameter
+   * 'outexpect' checks output produced by this model and the submodels
+ 
+   author: S.Heipcke, Nov 2022
+
+  (c) Copyright 2022 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+ *******************************************************!)
+!*! build mypkg.bim
+!*! parms VAL=5
+!*! outexpect Parameter value:5
+!*! outexpect Output from mypkg.
+!*! outexpect i=50
+
+model "Testing packages"
+ uses "mmjobs"
+ options keepassert
+ parameters
+   VAL=10
+ end-parameters
+
+ writeln("Parameter value:",VAL)
+
+ declarations
+   m: Model
+ end-declarations
+
+! Executing a submodel
+ with f="pkgtest" do
+   writeln("####Processing model ", f)
+   assert(compile(f+".mos")=0, "Error compiling model "+f+".mos")
+   load(m, f+".bim")
+   run(m,"VAL="+VAL)
+   wait
+   dropnextevent
+ end-do
+ 
+end-model

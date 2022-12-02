@@ -16,7 +16,7 @@
 
      mosel moseltest SRCDIR=myexampletest.mos KEEPDIR=true
 
-   author: S.Heipcke, Oct 2018
+   author: S.Heipcke, Oct 2018, rev. Jul. 2022
 
   (c) Copyright 2018 Fair Isaac Corporation
 
@@ -40,6 +40,9 @@
 !*! outexpect f\(x\)=20
 !*! errexpect Math error test
 !*! runstat 3
+! Min or max version requirements for Mosel or DSO/BIM libraries
+! (test will be skipped if run with other software versions)
+!*! required mosel>4.4
 
 model "my test example"
  options keepassert

@@ -1,0 +1,16 @@
+! This file demoes the use of the 'moseltest' tag 'model' that can be
+! employed to specify a test file that is not located under the test file
+! directory specified via the SRCDIR setting of 'moseltest'.
+! The LIBPATH of 'moseltest' needs to include the location of the
+! Mosel file 'myexampletest.bim' so that it can be located by this test
+! configuration.
+! Given that we are working with a BIM file, any 'moseltest' tags in the 
+! model source are ignored, only the tags specified below will be considered
+! when running this test.
+
+!*! model myexampletest
+!*! outexpect f\(x\)=0
+!*! outexpect f\(x\)=-10
+!*! outexpect f\(x\)=20
+!*! errexpect Math error test
+!*! runstat 3
