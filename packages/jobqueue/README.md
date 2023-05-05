@@ -29,7 +29,6 @@ Alternatively, you can choose to perform the following individual build steps:
 > A recent version of Mosel (Mosel 5 or newer) is required for executing the example.
 > The remote instances may use an older version (Mosel 4), as required by the models that are to be run.
 
-
 ## Testing
 
 This package is compatible with Mosel version 5.0 and more recent.
@@ -39,6 +38,10 @@ Running the provided test model *[mainjq.mos](test/mainjq.mos)*:
 * from the command line: `mosel mainjq`
 * with Xpress Workbench: open the file `mainjq.mos` in the Workbench workspace and select `Run mainjq.mos` from the workspace menu
 
+A second set of test files extends the test model *mainjq.mos* with an HTTP server that captures HTTP messages sent by submodels while they are executing. It can be run after generation of the jobqueue package in the same way as *mainjq.mos*:
+* from the command line: `mosel mainjqsrv`
+* with Xpress Workbench: open the file `mainjqsrv.mos` in the Workbench workspace and select `Run mainjqsrv.mos` from the workspace menu
+ 
 ## Legal
 
 See source code files for copyright notices.

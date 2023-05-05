@@ -1,0 +1,67 @@
+(!*******************************************************
+   Mosel Example Problems 
+   ======================
+
+   file simple2data.mos
+   ````````````````````
+   Model with different runtime parameter types 
+   reading data from a text file
+    - Extending simplewdata.mos with HTTP message -
+      
+   author: S.Heipcke, May 2023
+
+   (c) Copyright 2023 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+
+model "Runtime parameters and data"
+ uses "mmsystem", "mmhttp"
+ 
+ parameters
+   FILENAME = "simpledata.txt"
+   RESFILE = "results.txt"
+ end-parameters
+
+ declarations
+   public msg:text
+   query: text
+ end-declarations
+
+ msg:="I am starting right now!"
+ query:= "http://localhost:2533/msg"
+ if httppost(query,"text:msg","null:") div 100 <>2:
+   writeln("Failed to send the query")
+ writeln(msg)
+
+ declarations
+   A: array(S:set of integer) of real
+   L: list of text
+   r: real
+ end-declarations
+
+ initializations from FILENAME
+   A L r as "V"
+ end-initializations
+ writeln("Data read: A=", A, " L=", L, " r=", r)
+ forall(i in S) A(i):=A(i)*10
+ r:=r^2
+ L:=sum(s in L) [text("a_")+s]
+ writeln("New values: A=", A, " L=", L, " r=", r)
+
+ initializations to RESFILE
+   A as "Sol" L r as "val"
+ end-initializations
+
+end-model 

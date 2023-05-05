@@ -15,7 +15,7 @@
  
    author: Y. Colombani, Feb. 2019
 
-   (c) Copyright 2019 Fair Isaac Corporation
+   (c) Copyright 2019-2023 Fair Isaac Corporation
   
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -28,6 +28,9 @@
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
     See the License for the specific language governing permissions and
     limitations under the License.
+
+    0.0.1 Jan 2019  Initial version
+    0.0.4 May 2023  Correct handling of timers
 
 *******************************************************!)
 model jqsched
@@ -679,14 +682,8 @@ timer:=-1
 repeat
  wait
  evt:=getnextevent
- if evt.fromid=0 then     ! a command or timer
+ if evt.fromid=0 then     ! a command
   case evt.class of
-   EVENT_TIMER: if timer>=0 then
-                 send(CMD_OK,getpending(waiting))
-                 waiting:=-1
-		 timer:=-1
-		end-if
-		! else: queue empty before time expiration
    CMD_END    : finished:=true
    CMD_VERBOSE: do
    		 jqverb:=integer(evt.value)
@@ -725,6 +722,13 @@ repeat
    else
     logmsg(formattext("Event %s ignored",evt))
   end-case
+ elif evt.class=EVENT_TIMER then
+  if timer>=0 then
+   send(CMD_OK,getpending(waiting))
+   waiting:=-1
+   timer:=-1
+  end-if
+  ! else: queue empty before time expiration
  elif evt.class=EVENT_END then ! end of a submodel
   if processend(evt)=waiting and (once or getpending(waiting)<=0) then
    send(CMD_OK,getpending(waiting))

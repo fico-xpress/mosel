@@ -14,7 +14,7 @@
 
    author: Y. Colombani, Jan. 2019
 
-   (c) Copyright 2019 Fair Isaac Corporation
+   (c) Copyright 2019-2023 Fair Isaac Corporation
   
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -31,10 +31,11 @@
     0.0.1 Jan 2019  Initial version
     0.0.2 Dec 2021  Updates to use Mosel 5 functionality
     0.0.3 Jul 2022  Updated inline documentation
+    0.0.4 May 2023  Correct handling of timers in jqsched.mos
 
 *******************************************************!)
 package jobqueue
-version 0.0.3
+version 0.0.4
 uses 'mmsystem','mmjobs'
 imports 'jqcommon'
 nssearch jsched
