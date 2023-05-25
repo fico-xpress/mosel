@@ -219,7 +219,7 @@ end-function
 (!@doc.
   @descr Add an execution node to a queue
   @param qid a queue ID
-  @param cstr connection string (if "*" the current instance is used)
+  @param cstr connection string. If "*", the current instance is used (that is, no 'connect'). If "" (empty string), a new instance is created via 'rcmd' on the current machine/node.
   @param mt maximum number of models to run on this node
   @return ID for the new node
   @example See <fctRef>queuenew</fctRef>
@@ -234,7 +234,7 @@ end-function
 (!@doc.
   @descr Add an execution node to a queue
   @param qid a queue ID
-  @param cstr connection string (if "*" the current instance is used)
+  @param cstr connection string. If "*", the current instance is used (that is, no 'connect'). If "" (empty string), a new instance is created via 'rcmd' on the current machine/node.
 !)
 public function queueaddnode(qid:integer,cstr:text):integer
  returned:=queueaddnode(qid,cstr,1)
