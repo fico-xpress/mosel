@@ -5,7 +5,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2015-2022 Fair Isaac Corporation
+  (c) Copyright 2015-2023 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 *******************************************************!)
 model moseltest
-version 0.5.5
+version 0.5.7
 uses 'mmsystem','mmjobs'
 
 parameters
@@ -47,7 +47,10 @@ parameters
  TC=getenv("TEAMCITY_VERSION")<>"" ! Switch to Teamcity messaging
  TCMAXLOG=60000     ! Maximum length of a log file for Teamcity (characters)
  SAVELOGS=false     ! Keep example log even when successful
+ SHOWLOGS=false     ! Copy default streams to console when running tests
  LOGDIR=""          ! If defined, create separate log file per test
+ TESTPARAMS=""      ! Parameters to pass to the test models
+ HAVENMAKE=true     ! Windows: assume nmake is available (use make otherwise)
 
  COVLST=""          ! List of package/model/app names for coverage (separated by spaces)
  COVSRC=""          ! Paths to package/model sources (default: LIBPATH)
@@ -67,6 +70,7 @@ declarations
  nbfail:integer
  nbskipped:integer
  srcdir:text
+ testdir:text
  excludepat=["*.c9"+DIRSEP+"*"]
  pmvers:dynamic array(string) of integer
  pmvers_txt:dynamic array(string) of text
@@ -108,9 +112,10 @@ declarations
 end-declarations
 
 ! Prototypes
-forward function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
+forward function processtest(f:text,ft:integer,opts:array(string) of text,msg:text,testdir:text):boolean
 forward procedure startinstance
 forward procedure endinstance(discon:boolean)
+forward function mergeparms(p1:text,p2:text):text
 forward procedure run_mdr(parms:text)
 forward function execmos(torun:text,parms:text):integer
 forward function dobuild(tobuild:text):boolean
@@ -167,6 +172,7 @@ forward function tc_getfile(f:string):text
  OPTTYPES("build"):="lst"	! list of packages/modules to build
  OPTTYPES("package"):="txt"	! =package name => not run, will be saved
  OPTTYPES("module"):="txt"	! =module name => not run, will be saved
+ OPTTYPES("copy"):="lst"	! list of files to copy into the working directory
  OPTTYPES("skip"):="boo"	! if true: skip this test
  OPTTYPES("skip_host"):="lst"	! list of host names where test is skipped
  OPTTYPES("skip_sys"):="lst"	! list of system names where test is skipped
@@ -245,6 +251,9 @@ forward function tc_getfile(f:string):text
 
  if not TC then
   writeln("-- Starting testing procedure --")
+  if SHOWLOGS then
+   endtestpxf:="   "
+  end-if
  end-if
  sttime:=gettime
  forall(f in Allfiles) do
@@ -253,23 +262,28 @@ forward function tc_getfile(f:string):text
    tclabel:=text("name='")+tc_fixpath(f)+"'"
    writeln("##teamcity[testStarted ",tclabel,"]")
   else
-   write(" + ",f,": ");
-   if f.size+3+2<tplen then
-    write(" "*(tplen-3-2-f.size))
+   write(" + ",f,": ")
+   if SHOWLOGS then
+    writeln
+   else
+    if f.size+3+2<tplen then
+     write(" "*(tplen-3-2-f.size))
+    end-if
+    fflush
    end-if
-   fflush
   end-if
+  testdir:='.'
   if endswith(f,".mos") then
    fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f)
+   totest:=pathsplit(SYS_FNAME,f,testdir)
    ftype:=0
   elif endswith(f,".c") then
    fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f)
+   totest:=pathsplit(SYS_FNAME,f,testdir)
    ftype:=1
   elif endswith(f,".java") then
    fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f)
+   totest:=pathsplit(SYS_FNAME,f,testdir)
    ftype:=2
   elif endswith(f,".tar") then
    untar(srcdir+'/'+f,WKDIR)
@@ -285,14 +299,14 @@ forward function tc_getfile(f:string):text
    ftype:=findmain(WKDIR,totest)
   elif endswith(f,".mcf") then
    fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f)
+   totest:=pathsplit(SYS_FNAME,f,testdir)
    ftype:=3
   else
    if TC then
     writeln("##teamcity[testFailed ",tclabel," message='Unexpected file extention']")
     writeln("##teamcity[testFinished ",tclabel,"]")
    else
-    writeln("Unexpected file extention for file ",f,"!!!")
+    writeln(endtestpxf,"Unexpected file extention for file ",f,"!!!")
    end-if
    nbfail+=1
    next
@@ -310,7 +324,7 @@ forward function tc_getfile(f:string):text
     writeln("##teamcity[testFailed ",tclabel," message='Main file was not found']")
     writeln("##teamcity[testFinished ",tclabel,"]")
    else
-    writeln("Main file was not found in ",f,"!!!")
+    writeln(endtestpxf,"Main file was not found in ",f,"!!!")
    end-if
    nbfail+=1
    next
@@ -322,17 +336,17 @@ forward function tc_getfile(f:string):text
     tc_quote(reason)
     writeln("##teamcity[testIgnored ",tclabel," message='",reason,"']")
    else
-    writeln("Skipped (",reason,")")
+    writeln(endtestpxf,"Skipped (",reason,")")
    end-if
    nbskipped+=1
-  elif processtest(totest,ftype,MOPT,reason) then
+  elif processtest(totest,ftype,MOPT,reason,testdir) then
    nbfail+=1
    savelogs(f,tclabel)
    if TC then
     tc_quote(reason)
     writeln("##teamcity[testFailed ",tclabel," message='",reason,"']")
    else
-    writeln(reason,"!!!")
+    writeln(endtestpxf,reason,"!!!")
    end-if
   elif TC then
    if startswith(reason,"Skip") then
@@ -342,7 +356,7 @@ forward function tc_getfile(f:string):text
    end-if
    if SAVELOGS then savelogs(f,tclabel); end-if
   else
-   writeln(reason)
+   writeln(endtestpxf,reason)
    if SAVELOGS then savelogs(f,tclabel); end-if
   end-if
 
@@ -402,10 +416,11 @@ forward function tc_getfile(f:string):text
 !******************
 !* Process a test
 !******************
-function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):boolean
+function processtest(f:text,ft:integer,opts:array(string) of text,msg:text,testdir:text):boolean
  declarations
   specenv:set of string
   rtmsg:text
+  datadir:text
  end-declarations
 
  fflush
@@ -414,6 +429,22 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
    fcopy(DATADIR+'/'+fc,WKDIR)
    if getsysstat<>0 then
      msg:="Failed to restore file '"+fc+"'"
+     returned:=true
+     break
+   end-if
+  end-do
+ end-if
+
+ if testdir<>'.' then
+  datadir:=srcdir+'/'+testdir
+ else
+  datadir:=srcdir
+ end-if
+ if opts("copy")<>"" then
+  forall(fc in splitlist(opts("copy"),44)) do
+   fcopy(datadir+'/'+fc,WKDIR)
+   if getsysstat<>0 then
+     msg:="Failed to copy file '"+fc+"'"
      returned:=true
      break
    end-if
@@ -455,7 +486,7 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
        if coverage then
         setcontrol(mdr,"runmode","2")
        end-if
-       run_mdr(opts("parms"))
+       run_mdr(mergeparms(TESTPARAMS,opts("parms")))
        expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
        expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
        if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
@@ -483,7 +514,7 @@ function processtest(f:text,ft:integer,opts:array(string) of text,msg:text):bool
      if coverage then
       setcontrol(mdr,"runmode","2")
      end-if
-     run_mdr(opts("parms"))
+     run_mdr(mergeparms(TESTPARAMS,opts("parms")))
      expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
      expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
@@ -605,6 +636,10 @@ procedure startinstance
  setcontrol(minst,"lang","en")
  outpath:=string(expandpath(text(WKDIR)+"/"+OUT))
  errpath:=string(expandpath(text(WKDIR)+"/"+ERR))
+ if SHOWLOGS and not TC then
+  outpath:="tee:"+outpath+"&rmt:sysfd:1"
+  errpath:="tee:"+outpath+"&rmt:sysfd:2"
+ end-if
  setdefstream(minst,F_INPUT,"null:")
  setdefstream(minst,F_OUTPUT+F_LINBUF,outpath)
  setdefstream(minst,F_ERROR+F_LINBUF,errpath)
@@ -628,6 +663,23 @@ procedure endinstance(discon:boolean)
   end-if
  end-if
 end-procedure
+
+!***********************************
+!* Merge 2 parameter lists
+!***********************************
+function mergeparms(p1:text,p2:text):text
+ if p1="" then
+  returned:=p2
+ elif p2="" then
+  returned:=p1
+ else
+  returned:=p1
+  trim(returned)
+  tt:=p2
+  trim(tt)
+  returned+=text(",")+tt
+ end-if
+end-function
 
 !***********************************
 !* Run the model mdr on minst
@@ -1266,7 +1318,7 @@ procedure setsysdep
  asproc(getpmvers('mosel'))
  pmvers(""):=-1
 
- if sysname="windows" then
+ if sysname="windows" and HAVENMAKE then
    ! use nmake if it is available
    fopen("null:",F_OUTPUT)
    fopen("null:",F_ERROR)
