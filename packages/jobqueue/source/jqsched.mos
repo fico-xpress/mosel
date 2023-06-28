@@ -489,7 +489,7 @@ procedure ctrl_cleanup(mo:Model,tid:integer)
  end-if
 end-procedure
 
-! Update a queue by trying to start as many tasks as possibme
+! Update a queue by trying to start as many tasks as possible
 procedure updatequeue(qid:integer)
  repeat
   cnt:=runqueue(qid)

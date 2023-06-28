@@ -32,10 +32,11 @@
     0.0.2 Dec 2021  Updates to use Mosel 5 functionality
     0.0.3 Jul 2022  Updated inline documentation
     0.0.4 May 2023  Correct handling of timers in jqsched.mos
+    0.0.5 Jun 2023  Support for datablocks in 'jobadd'
 
 *******************************************************!)
 package jobqueue
-version 0.0.4
+version 0.0.5
 uses 'mmsystem','mmjobs'
 imports 'jqcommon'
 nssearch jsched
@@ -94,6 +95,12 @@ end-procedure
   @info The destination filename must be an actual filename, not including any I/O driver. If the 'dst' argument is not specified its value is deduced from the 'src' argument, in which case the filename specified for 'src' must be a complete path (excluding the use of I/O drivers, including 'tmp:'). If the source filename in 'src' is specified as an extended filename using an I/O driver, then the 'dst' filename must be stated explicitly, using the 3-argument version of this subroutine.  
 !)
 public procedure jobadd(j:jq_job,src:text,dst:text)
+ ! turn a datablock into a physical temporary file
+ if startswith(src,"zlib.deflate:mem:") or startswith(src,"mem:") then
+  newsrc:="tmp:"+newmuid
+  fcopy(src,newsrc)
+  src:=newsrc
+ end-if
  j.srcfiles+=[expandpath(src)]
  j.dstfiles+=[text(dst)]
 end-procedure
