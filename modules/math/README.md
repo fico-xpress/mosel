@@ -2,7 +2,9 @@
 
 ## Description
 
-The module *math* implemented by *[math.c](math.c)* provides additional Maths functionality for the Mosel language.  
+The module *math* implemented by *[math.c](math.c)* (with the include file *[bigint.c](bigint.c)*) provides additional Maths functionality for the Mosel language, including the definition of a 64-bit integer type with standard access routines and operators. 
+
+The header file *[mmath.h](mmath.h)* defines access routines for the type *int64* via Mosel's Intermodule communication interface (IMCI) in order to make this type directly available to other Mosel modules.
 
 ## Documentation
 
@@ -31,12 +33,12 @@ Depending on your platform, use the corresponding [makefiles](../README.md):
 
 ## Testing
 
-This module is compatible with Mosel version 3.0 and more recent.
+This module is compatible with Mosel version 5.4 and more recent.
 
 Make sure the file `math.dso` is on the DSO search path (either in the *dso* subdirectory of your Xpress Mosel installation or in a location pointed to by the enviroment variable `MOSEL_DSO`).
-Run the provided test model *[math_test.mos](math_test.mos)*:
-* from the command line: `mosel math_test`
-* with Xpress Workbench: open the file `math_test.mos` in the Workbench workspace and select `Run math_test.mos` from the workspace menu
+Run the provided main test model *[run_math_tests.mos](run_math_tests.mos)*:
+* from the command line: `mosel run_math_tests`
+* with Xpress Workbench: open the file `run_math_tests.mos` in the Workbench workspace and select `Run run_math_tests.mos` from the workspace menu
 
 ## Legal
 

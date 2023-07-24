@@ -1,0 +1,170 @@
+(!******************************************************
+  File math_testint64.mos
+  ```````````````````````
+  Testing the int64 handling functionality defined by module 'math'. 
+   
+  author: S. Heipcke, July 2023
+
+  (c) Copyright 2023 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "testing int64"
+  options keepassert
+  uses "math", "mmsystem", "random"
+
+  declarations
+    v: integer
+    w,l: int64
+    r: real
+    a: any
+  end-declarations
+
+  writeln("Testing int64")
+
+ ! **** Reading/writing int64 ****
+  parseextn("12345678901234",1,l)
+  assert(getsysstat=0) 
+  create(a.int64)
+  parseextn("12345678901234",1,a.int64)
+  assert(getsysstat=0) 
+  assert(l=a.int64) 
+  writeln(l, "=", a)
+ ! Parsing as real can be used if the number is small enough for floating point
+  r:=parsereal("12345678901234",1)
+  assert(getsysstat=0) 
+  l:=int64(r)
+  writeln(l, "=", formattext("%j",r)) 
+
+  writeln("Value of maxint64 constant: ", MAX_INT64)
+
+ ! **** Type casts (int64<->integer; int64<->real) ****
+  v:=5; r:=1.55
+  w:=int64(v); writeln("Cast integer->int64: ", v," ",w); assert(v=w)
+  w:=int64(r); writeln("Cast real->int64: ", r," ",w); assert(w=1)
+  w:=123
+  v:=w.asint; r:=getasreal(w)
+  writeln("Cast int64=", w, " ->int=", v, " ->real=", r)
+  assert(v=w)
+  assert(abs(w-r)=0)     ! Comparison operator with real is not implemented
+  w:=int64(1.3456E+2); writeln("From scientific notation: ", w); assert(w=134)
+
+ ! **** Operators on int64 and in combination with integer and real ****
+  v:=5; w:=3; r:=1.5; l:=5
+  writeln("v=",v, " w=",w, " r=",r, " l=",l)
+  a:=l+w
+  writeln("l+w=", a); assert(a is int64); assert(a.int64=8)
+  a:=l-w
+  writeln("l-w=", a); assert(a is int64); assert(a.int64=2)
+  a:=l*w
+  writeln("l*w=", a); assert(a is int64); assert(a.int64=15)
+  a:=l/w
+  writeln("l/w=", a); assert(a is real); assert(a.real=5/3)
+  a:=w/l
+  writeln("w/l=", a); assert(a is real); assert(a.real=0.6)
+  a:=l mod w
+  writeln("l mod w=", a); assert(a is int64); assert(a.int64=2)
+  a:=l div w
+  writeln("l div w=", a); assert(a is int64); assert(a.int64=1)
+  a:=w mod l
+  writeln("w mod l=", a); assert(a is int64); assert(a.int64=3)
+  a:=w div l
+  writeln("w div l=", a); assert(a is int64); assert(a.int64=0)
+  writeln("l=",l, " w=",w, " l=w:", l=w, " l<>w:", l<>w, " l>w:", l>w) 
+  assert(not l=w); assert(l<>w); assert(l>w)
+  writeln(getasint(l)*"-") 
+
+ ! Combination with integer
+  a:=v+w
+  writeln("v+w=", a); assert(a is int64); assert(a.int64=8)
+  a:=v-w
+  writeln("v-w=", a); assert(a is int64); assert(a.int64=2)
+  a:=v*w
+  writeln("v*w=", a); assert(a is int64); assert(a.int64=15)
+  a:=v/w
+  writeln("v/w=", a); assert(a is real); assert(a.real=5/3)
+  a:=w/v
+  writeln("w/v=", a); assert(a is real); assert(a.real=0.6)
+  a:=v mod w
+  writeln("v mod w=", a); assert(a is integer); assert(a.integer=2)
+  a:=v div w
+  writeln("v div w=", a); assert(a is integer); assert(a.integer=1)
+  a:=w mod v
+  writeln("w mod v=", a); assert(a is int64); assert(a.int64=3)
+  a:=w div v
+  writeln("w div v=", a); assert(a is int64); assert(a.int64=0)
+  writeln("v=",v, " w=",w, " v=w:", v=w, " v<>w:", v<>w, " v>w:", v>w) 
+  assert(not v=w); assert(v<>w); assert(v>w)
+  writeln(v*"-") 
+
+ ! Combination with real: rounding might occur!!!
+  a:=r+w
+  writeln("r+w=", a); assert(a is real); assert(a.real=4.5)
+  a:=r-w
+  writeln("r-w=", a); assert(a is real); assert(a.real=-1.5)
+  a:=r*w
+  writeln("r*w=", a); assert(a is real); assert(a.real=4.5)
+  a:=r/w
+  writeln("r/w=", a); assert(a is real); assert(a.real=0.5)
+  a:=w/r
+  writeln("w/r=", a); assert(a is real); assert(a.real=2)
+
+ ! **** Functions ****
+  a:=abs(-w)
+  writeln("abs(-w)=", a); assert(a is int64); assert(a.int64=3)
+  assert(abs(w)=abs(-w))
+  a:=isodd(w)
+  writeln(w, " is odd:", a); assert(a is boolean); assert(a.boolean)
+
+ ! **** Ordering property: type 'int64' can be used in 'qsort' ****
+  declarations
+    ToSort: array(I: range) of int64
+    L: list of integer
+    LS: list of int64
+  end-declarations
+  setmtrandseed(3)
+  forall(j in 1..10) ToSort(j):=mtrand_int(1,20)
+ ! The array itself cannot be re-ordered (that is, the 2-argument version of 
+ ! qsort is not usable with arrays of external types)
+  writeln("To sort:", ToSort, " Indices:", I)
+  qsort(SYS_UP,ToSort,L)       ! Sorted array indices returned in list L
+  writeln("Sorted array:", sum(j in L)[ToSort(j)])
+  assert(and(i,j in 1..10 | i<j) ToSort(L(i))<=ToSort(L(j)))
+
+ ! Subset selection, sorted indices returned in list L
+  L:=[]
+  S:=union(j in I | not isodd(j)){j}
+  qsort(SYS_UP,ToSort,L,S)  
+  writeln("Sorted even-index entries:", sum(j in L)[ToSort(j)])
+  assert(and(i,j in 1..L.size | i<j) ToSort(L(i))<=ToSort(L(j)))
+
+ ! Sort a list of int64 values 
+  LS:=sum(j in I)[ToSort(j)]   
+  write("LS=", LS)
+  qsort(SYS_DOWN,LS)
+  writeln("  Sorted LS=", LS)
+  assert(and(i,j in 1..LS.size | i<j) LS(i)>=LS(j))
+
+
+ ! **** Constant property: type 'int64' can be used as indexing set ****
+  declarations
+    A: array(IA: set of constant int64) of real
+  end-declarations
+
+  A(1):=1.5; A(3):=2.25; A(1+2):=3.5; A(1 mod 2):=7.5
+  writeln("A=",A, " size=",A.size, " indices=",A.index(1))
+  assert(A.size=2 and IA.size=2)
+
+  writeln("All okay.")
+end-model

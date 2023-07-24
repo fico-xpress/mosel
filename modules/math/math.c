@@ -1,25 +1,42 @@
 /******************************************
-  Mosel NI Examples
-  =================
-    
   File math.c
   ```````````
   Example module defining a set of
-  mathematical functions
+  mathematical functions and
+  an int64 type
 
-  (c) 2008 Fair Isaac Corporation
-      author: Y. Colombani, rev. Apr. 2018
+  author: Y. Colombani, rev. Apr. 2023
+
+  (c) Copyright 2023 Fair Isaac Corporation
+  
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+       http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
 *******************************************/
 /*
 cl /nologo /MD /I%XPRESSDIR%\include /LD math.c /Femath.dso
 gcc -Wall -o math.dso -shared -D_REENTRANT -I${XPRESSDIR}/include math.c -lm
 */
+#define VMAJ 1
+#define VMIN 0
+#define VREL 0
 
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <math.h>
-#define XPRM_NICOMPAT 3000000	/* Compatibility level: Mosel 3.0.0 */
+#define XPRM_NICOMPAT 5004000   /* Compatibility level: Mosel 5.4.0 */
 #include "xprm_ni.h"
+#include "mmath.h"
 
 /**** Function prototypes ****/
 static int chkerror(XPRMcontext ctx,const char *fct);
@@ -57,6 +74,58 @@ static int ma_jn(XPRMcontext ctx,void *libctx);
 static int ma_y0(XPRMcontext ctx,void *libctx);
 static int ma_y1(XPRMcontext ctx,void *libctx);
 static int ma_yn(XPRMcontext ctx,void *libctx);
+
+static void *ma_reset(XPRMcontext ctx,void *libctx,int version);
+static int ma_chkver(int);
+static void ma_updvers(int,int,int*);
+static int ma_chkres(int);
+static size_t ma_memuse(XPRMcontext ctx,void *libctx,void *ref,int code);
+
+					/* From bigint.c */
+static int bi_maxi64(XPRMcontext ctx,void *libctx);
+static int bi_isodd(XPRMcontext ctx,void *libctx);
+static int bi_abs(XPRMcontext ctx,void *libctx);
+static int bi_asint(XPRMcontext ctx,void *libctx);
+static int bi_asreal(XPRMcontext ctx,void *libctx);
+static int bi_new0(XPRMcontext ctx,void *libctx);
+static int bi_new1r(XPRMcontext ctx,void *libctx);
+static int bi_new1i(XPRMcontext ctx,void *libctx);
+static int bi_zero(XPRMcontext ctx,void *libctx);
+static int bi_one(XPRMcontext ctx,void *libctx);
+static int bi_asgn(XPRMcontext ctx,void *libctx);
+static int bi_asgn_i(XPRMcontext ctx,void *libctx);
+static int bi_pls(XPRMcontext ctx,void *libctx);
+static int bi_pls_i(XPRMcontext ctx,void *libctx);
+static int bi_pls_r(XPRMcontext ctx,void *libctx);
+static int bi_neg(XPRMcontext ctx,void *libctx);
+static int bi_mul(XPRMcontext ctx,void *libctx);
+static int bi_mul_i(XPRMcontext ctx,void *libctx);
+static int bi_mul_r(XPRMcontext ctx,void *libctx);
+static int bi_div(XPRMcontext ctx,void *libctx);
+static int bi_div_i1(XPRMcontext ctx,void *libctx);
+static int bi_div_i2(XPRMcontext ctx,void *libctx);
+static int bi_div_r1(XPRMcontext ctx,void *libctx);
+static int bi_div_r2(XPRMcontext ctx,void *libctx);
+static int bi_idiv(XPRMcontext ctx,void *libctx);
+static int bi_idiv_i1(XPRMcontext ctx,void *libctx);
+static int bi_idiv_i2(XPRMcontext ctx,void *libctx);
+static int bi_mod(XPRMcontext ctx,void *libctx);
+static int bi_mod_i1(XPRMcontext ctx,void *libctx);
+static int bi_mod_i2(XPRMcontext ctx,void *libctx);
+static int bi_eql_i(XPRMcontext ctx,void *libctx);
+static int bi_eql_i2(XPRMcontext ctx,void *libctx);
+static int bi_lt_i(XPRMcontext ctx,void *libctx);
+static int bi_lt_i2(XPRMcontext ctx,void *libctx);
+static int bi_gt_i(XPRMcontext ctx,void *libctx);
+static int bi_gt_i2(XPRMcontext ctx,void *libctx);
+static int bi_tostr(XPRMcontext ctx,void *,void *,char *,int,int);
+static int bi_fromstr(XPRMcontext ctx,void *libctx,void *toinit,const char *str,int,const char **endptr);
+static int bi_copy(XPRMcontext ctx,void *libctx,void *toinit,void *src,int typnum);
+static int bi_compare(XPRMcontext ctx,void *libctx,void *c1,void *c2,int typnum);
+static void *bi_create(XPRMcontext ctx,void *,void *,int);
+static void bi_delete(XPRMcontext ctx,void *,void *,int);
+static int64_t imci_getint64val(XPRMcontext ctx,struct MathCtx *mactx,void *ref);
+static int imci_setint64val(XPRMcontext ctx,struct MathCtx *mactx,void *ref,int64_t v);
 
 /**** Structures for passing info to Mosel ****/
 /* Constants */
@@ -125,14 +194,68 @@ static XPRMdsofct tabfct[]=
          {"jn",1122,XPRM_TYP_REAL,2,"ir",ma_jn},
          {"y0",1123,XPRM_TYP_REAL,1,"r",ma_y0},
          {"y1",1124,XPRM_TYP_REAL,1,"r",ma_y1},
-         {"yn",1125,XPRM_TYP_REAL,2,"ir",ma_yn}
+         {"yn",1125,XPRM_TYP_REAL,2,"ir",ma_yn},
+
+         {"@&",1300,XPRM_TYP_EXTN,1,"int64:|int64|",bi_new0},
+         {"@&",1301,XPRM_TYP_EXTN,1,"int64:r",bi_new1r},
+         {"@&I",1302,XPRM_TYP_EXTN,1,"int64:i",bi_new1i},
+         {"@0",1304,XPRM_TYP_EXTN,0,"int64:",bi_zero},
+         {"@1",1305,XPRM_TYP_EXTN,0,"int64:",bi_one},
+         {"@:",1306,XPRM_TYP_NOT,2,"|int64||int64|",bi_asgn},
+         {"@:",1307,XPRM_TYP_NOT,2,"|int64|i",bi_asgn_i},
+         {"@+",1308,XPRM_TYP_EXTN,2,"int64:|int64||int64|",bi_pls},
+         {"@+",1309,XPRM_TYP_EXTN,2,"int64:|int64|i",bi_pls_i},
+         {"@+",1310,XPRM_TYP_REAL,2,"|int64|r",bi_pls_r},
+         {"@*",1311,XPRM_TYP_EXTN,2,"int64:|int64||int64|",bi_mul},
+         {"@*",1312,XPRM_TYP_EXTN,2,"int64:|int64|i",bi_mul_i},
+         {"@*",1313,XPRM_TYP_REAL,2,"|int64|r",bi_mul_r},
+         {"@-",1314,XPRM_TYP_EXTN,1,"int64:|int64|",bi_neg},
+         {"@/",1315,XPRM_TYP_REAL,2,"|int64||int64|",bi_div},
+         {"@/",1316,XPRM_TYP_REAL,2,"|int64|i",bi_div_i1},
+         {"@/",1317,XPRM_TYP_REAL,2,"i|int64|",bi_div_i2},
+         {"@/",1318,XPRM_TYP_REAL,2,"|int64|r",bi_div_r1},
+         {"@/",1319,XPRM_TYP_REAL,2,"r|int64|",bi_div_r2},
+         {"@d",1320,XPRM_TYP_EXTN,2,"int64:|int64||int64|",bi_idiv},
+         {"@d",1321,XPRM_TYP_EXTN,2,"int64:|int64|i",bi_idiv_i1},
+         {"@d",1322,XPRM_TYP_INT,2,"i|int64|",bi_idiv_i2},
+         {"@m",1323,XPRM_TYP_EXTN,2,"int64:|int64||int64|",bi_mod},
+         {"@m",1324,XPRM_TYP_EXTN,2,"int64:|int64|i",bi_mod_i1},
+         {"@m",1325,XPRM_TYP_INT,2,"i|int64|",bi_mod_i2},
+
+         {"@=",1350,XPRM_TYP_BOOL,2,"|int64|i",bi_eql_i},
+         {"@<",1351,XPRM_TYP_BOOL,2,"|int64|i",bi_lt_i},
+         {"@>",1352,XPRM_TYP_BOOL,2,"|int64|i",bi_gt_i},
+         {"@=",1353,XPRM_TYP_BOOL,2,"i|int64|",bi_eql_i2},
+         {"@<",1354,XPRM_TYP_BOOL,2,"i|int64|",bi_lt_i2},
+         {"@>",1355,XPRM_TYP_BOOL,2,"i|int64|",bi_gt_i2},
+
+         {"MAX_INT64",1370,XPRM_TYP_EXTN,0,"int64:",bi_maxi64},
+         {"isodd",1371,XPRM_TYP_BOOL,1,"|int64|",bi_isodd},
+         {"abs",1372,XPRM_TYP_EXTN,1,"int64:|int64|",bi_abs},
+         {"getasint",1373,XPRM_TYP_INT,1,"|int64|",bi_asint},
+         {"getasreal",1374,XPRM_TYP_REAL,1,"|int64|",bi_asreal}
 	};
 
-static int chkres(int);
+                                     /* Table of types */
+static XPRMdsotyp tabtyp[]=
+        {
+         {"int64",1,XPRM_DTYP_PNCTX|XPRM_DTYP_RFCNT|XPRM_DTYP_APPND|XPRM_DTYP_TFBIN|XPRM_DTYP_ORD|XPRM_DTYP_CONST,bi_create,bi_delete,bi_tostr,bi_fromstr,bi_copy,bi_compare}
+        };
+
                                      /* Table of services */
+static struct Mmath_imci imci=
+	{
+	 imci_getint64val,
+	 imci_setint64val
+	};
 static XPRMdsoserv tabserv[]=
         {
-         {XPRM_SRV_CHKRES,(void*)chkres}
+         {XPRM_SRV_RESET,(void *)ma_reset},
+	 {XPRM_SRV_CHKVER,(void*)ma_chkver},
+         {XPRM_SRV_MEMUSE,(void *)ma_memuse},
+         {XPRM_SRV_CHKRES,(void*)ma_chkres},
+	 {XPRM_SRV_UPDVERS,(void*)ma_updvers},
+	 {XPRM_SRV_IMCI,(void *)(&imci)}
         };
 
 /* Interface structure */
@@ -140,11 +263,20 @@ static XPRMdsointer dsointer=
         { 
          sizeof(tabconst)/sizeof(XPRMdsoconst),tabconst,
          sizeof(tabfct)/sizeof(XPRMdsofct),tabfct,
-         0,NULL,
+         sizeof(tabtyp)/sizeof(XPRMdsotyp),tabtyp,
          sizeof(tabserv)/sizeof(XPRMdsoserv),tabserv
         };
 
 static XPRMnifct mm;             /* For storing Mosel NI function table */
+
+typedef struct MathCtx            /* Module context */
+        {
+         int nbmaxi64;          /* current size of the arrays */
+         int nbi64;             /* current number of int64s */
+         size_t firstfree;      /* first free int64 */
+         unsigned int *refcnt;  /* refcnts of int64s */
+         int64_t *value;        /* values of int64s */
+        } s_mathctx;
 
 /************************************************/
 /* Initialize the library just after loading it */
@@ -153,17 +285,9 @@ DSO_INIT math_init(XPRMnifct nifct, int *interver,int *libver, XPRMdsointer **in
 {
  mm=nifct;                      /* Save the table of Mosel NI functions */
  *interver=XPRM_NIVERS;         /* The Mosel NI version we are using */
- *libver=XPRM_MKVER(0,0,3);     /* The version of the module */
+ *libver=XPRM_MKVER(VMAJ,VMIN,VREL); /* The version of the module */
  *interf=&dsointer;             /* Our interface */
 
- return 0;
-}
-
-/****************************************************************/
-/* Check restrictions (this module implements all restrictions) */
-/****************************************************************/
-static int chkres(int r)
-{
  return 0;
 }
 
@@ -174,7 +298,7 @@ static int chkerror(XPRMcontext ctx,const char *fct)
 {
  if(errno!=0)
  {
-  mm->dispmsg(ctx,"MATH: Error while evaluating '%s'.\n",fct);
+  mm->dispmsg(ctx,"Math: Error while evaluating '%s'.\n",fct);
   return XPRM_RT_MATHERR;
  }
  else
@@ -529,3 +653,94 @@ static int ma_yn(XPRMcontext ctx,void *libctx)
  XPRM_TOP_ST(ctx)->real=yn(n,XPRM_TOP_ST(ctx)->real);
  return XPRM_RT_OK;
 }
+
+/******************** Services ********************/
+
+/***********************************/
+/* Reset the math module for a run */
+/***********************************/
+static void *ma_reset(XPRMcontext ctx,void *libctx,int version)
+{
+ s_mathctx *mactx;
+
+ if(libctx==NULL)               /* libctx==NULL => initialisation */
+ {
+  mactx=malloc(sizeof(s_mathctx));
+  if(mactx==NULL)
+  {
+   mm->dispmsg(ctx,"Math: Out of memory error.\n");
+   return NULL;
+  }
+  else
+  {
+   memset(mactx,0,sizeof(s_mathctx));
+   return mactx;
+  }
+ }
+ else
+ {
+  mactx=libctx;
+
+  free(mactx->value);
+  free(mactx);
+  return NULL;
+ }
+}
+
+/****************************************************************/
+/* Check restrictions (this module implements all restrictions) */
+/****************************************************************/
+static int ma_chkres(int r)
+{
+ return 0;
+}
+
+/**********************************/
+/* Handle compatibility checkings */
+/**********************************/
+static int ma_chkver(int v)
+{
+ return (v>MM_MKVER(VMAJ,VMIN,VREL))||(v<MM_MKVER(0,0,3));
+}
+
+/********************************************/
+/* Update version number during compilation */
+/********************************************/
+static void ma_updvers(int type,int what,int *v)
+{
+ switch(type)
+ {
+  case XPRM_UPDV_INIT: if(*v <XPRM_MKVER(0,0,3)) *v=XPRM_MKVER(0,0,3); break;
+  case XPRM_UPDV_FUNC:
+	if(*v<XPRM_MKVER(1,0,0))
+	{
+	 if((what>=1300)&&(what<=1374))	/* int64 routines */
+	 { *v=XPRM_MKVER(1,0,0); return; }
+	}
+	break;
+  case XPRM_UPDV_TYPE:
+	if(*v<XPRM_MKVER(1,0,0))
+	 *v=XPRM_MKVER(1,0,0);
+	break;
+ }
+}
+
+/*****************************/
+/* Memory used by the module */
+/*****************************/
+static size_t ma_memuse(XPRMcontext ctx,void *libctx,void *ref,int code)
+{
+ s_mathctx *mactx=libctx;
+
+ switch(code)
+ {
+  case 0:
+    return sizeof(s_mathctx)+mactx->nbmaxi64*(sizeof(int)+sizeof(int64_t));
+  case 1:
+    return sizeof(int64_t)+sizeof(int);
+  default:
+    return -1;
+ }
+}
+
+#include "bigint.c"
