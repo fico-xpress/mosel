@@ -2,7 +2,7 @@
 
   author: Y. Colombani July 2015
 
-  (c) Copyright 2015-2023 Fair Isaac Corporation
+  (c) Copyright 2015-2024 Fair Isaac Corporation
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -43,6 +43,14 @@ For instance to run the 'mytest.mos' program:
 When using a directory as the source for test files, any
 directory structure is accepted (i.e. all subdirectories are traversed
 and files are processed in alphabetical order).
+To select tests to be actually processed from this directory it is possible
+to define an inclusion list (TINCL) and an exclusion list (TEXCL): these
+2 parameters are either a list of file patterns (separated by commas) or
+a file name preceded by the symbol '@' (in this file each line is interpreted
+as a pattern and empty or lines starting with '!' or '#' are ignored).
+For instance:
+
+ mosel moseltest SRCDIR=alltests TINCL='Book/*,unit/*' TEXCL='@toexclude'
 
 A test can be packaged either as a single file (.mos, .c, .java or .mcf),
 as an archive (.tar, .tar.gz, .tgz or .zip) or as a subdirectory (the name
@@ -108,7 +116,7 @@ the zip archive before looking into COVSRC directories.
 
 Report generation settings
 ``````````````````````````
-Unless Teamcity mode is enabled (see below) moseltest generates a report in 
+With the default reporting format (see below) moseltest generates a report in 
 the file specified via parameter REPFILE or if no specific name is set via 
 this parameter using the base report name from parameter BASEREP, optionally 
 generating a unique report file name by appending a date to it (depending on 
@@ -158,14 +166,18 @@ If the parameter KEEPENV is 'true' then the MOSEL_DSO and MOSEL_BIM settings
 are inherited from current environment, otherwise they are re-initialized by 
 moseltest.
 
-Teamcity mode
+Report format
 `````````````
-If Teamcity mode is enabled (by setting parameter TC to 'true') then no report 
-file is generated, in its place output in Teamcity format is generated that is 
-sent to the output stream. The length of the output sent to Teamcity is limited 
-to the number of characters specified in TCMAXLOG, truncating from the end of 
-the message string if required.
-
+The parameter RFMT decides how test results are reported. With the default
+format (RFMT='') the information is displayed as a human readable text.
+The program may alternatively generate TeamCity Service Messages (RFMT='TC'),
+TAP-14 (RFMT='TAP') and TAP-13 (RFMT='TAP13') reports as well as Junit XML
+reports (RFMT='JUNIT'). In all cases the report is sent to the standard output
+stream of the program and includes output and error logs of failing tests (or
+for all tests if SHOWLOGS is set). The parameter MAXLOGLEN (default: 60000) is
+the maximum number of characters to save for a given stream (the beginning of
+the stream is stripped if this limit is exceeded). A value of 0 removes the
+limit and a negative value disables inclusion of logs in the report.
 
 moseltest tags
 ==============
@@ -225,15 +237,15 @@ model: name of a compiled model (no file extension) or an application (ends with
 	This tag can only be used in a configuration file (extension .mcf), the
 	"test" is the specified model or application that must be stored in one
 	of the directories stated via LIBPATH.
+compstat: expected compilation status (integer)
+	By default moseltest expects the compilation of a model source to
+	succeed. This tag will be used to test the compiler when a compilation
+	failure is expected.
 parms:  List of parameters passed to the test model. Several 'parms' tags might
 	be stated, the actual parameter string is built by concatenating the
 	different tags. Any parameter settings that are specified via the 
 	'TESTPARAMS' parameter of moseltest are merged with the settings made
 	via 'parms' tags.
-compstat: expected compilation status (integer)
-	By default moseltest expects the compilation of a model source to
-	succeed. This tag will be used to test the compiler when a compilation
-	failure is expected.
 runstat: expected execution status (integer)
 	By default a test is successful after the model execution returns
 	the execution status value 0. This tag specifies an alternative
@@ -300,9 +312,9 @@ required: minimum or maximum version number of a component that is required
 	different components. The operators '<' and '>' mean '<=' and '>=' 
 	respectively. The extension needs to be specified if a component has
 	both, a DSO and a BIM portion of the same name.
-	Format: mosel|module[.dso]|package[.bim] <|> MM[.mm[.rr]]
+	Format: mosel|module[.dso]|package[.bim] <|> MM[.mm[.rr]] 
 copy: name of a file to be copied into the working directory before running
-	the test.
+  the test
 
 
 Usage examples
@@ -367,8 +379,8 @@ Here are some examples of how to use the 'moseltest' tags:
  !*! save usrinputdump.txt
 
   A second .mcf file for the same Insight app may specify a different parameter
-  configuration by which the app reads in the previously saved file that gets
-  copied into the test working directory via 'restore'.
+  configuration by which the app reads in the previously saved file that needs
+  to be copied into the test working directory via 'restore'.
  !*! model:explapp.zip
  !*! restore usrinputdump.txt
  !*! parms:MODE=USRRUN
