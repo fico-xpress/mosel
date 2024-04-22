@@ -3,7 +3,7 @@
   ```````````````````````
   Testing the int64 handling functionality defined by module 'math'. 
    
-  author: S. Heipcke, July 2023
+  author: S. Heipcke, July 2023, rev. Apr. 2024
 
   (c) Copyright 2023 Fair Isaac Corporation
 
@@ -165,6 +165,36 @@ model "testing int64"
   A(1):=1.5; A(3):=2.25; A(1+2):=3.5; A(1 mod 2):=7.5
   writeln("A=",A, " size=",A.size, " indices=",A.index(1))
   assert(A.size=2 and IA.size=2)
+
+ ! **** Minimum/maximum operators ****
+  declarations
+    SI: set of constant int64
+  end-declarations
+
+  SI:={int64(123456), int64(123457), int64(-12345), int64(1234), 
+    int64(12345), int64(1122), int64(123456789012345)}
+  LI:=list(SI)
+  qsort(SYS_UP,LI)
+  writeln("LI=",LI)
+  assert(LI(1)=-12345,"LI(1)")
+  assert(LI(3)=1234,"LI(3)")
+  assert(LI(7)=int64(123456789012345),"LI(7)")
+
+  a:=min(i in SI) i
+  writeln("min int64:", a, " ", a is int64)
+  assert(a.int64=LI.first, "min SI <> first LI")
+  w:=minlist(int64(123456), int64(123457), int64(-12345), int64(1234), 
+    int64(12345), int64(1122), int64(123456789012345))
+  writeln("minlist:", w)
+  assert(w=a.int64, "min SI <> minlist")
+
+  a:=max(i in SI) i
+  writeln("max int64:", a, " ", a is int64)
+  assert(a.int64=LI.last, "max SI <> last LI")
+  w:=maxlist(int64(123456), int64(123457), int64(-12345), int64(1234),
+    int64(12345), int64(1122), int64(123456789012345))
+  writeln("maxlist:", w)
+  assert(w=a.int64, "max SI <> maxlist")
 
   writeln("All okay.")
 end-model

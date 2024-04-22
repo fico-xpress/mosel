@@ -210,6 +210,21 @@ static int bi_one(XPRMcontext ctx,void *libctx)
  return XPRM_RT_OK;
 }
 
+/********************************************/
+/* Smallest value for int64 (used in 'max') */
+/********************************************/
+static int bi_imax(XPRMcontext ctx,void *libctx)
+{
+ s_mathctx *mactx=libctx;
+ void *r1;
+
+ r1=bi_create(ctx,libctx,NULL,0);
+ if(r1==NULL) return XPRM_RT_ERROR;
+ BIVAL(r1)=-MAX_INT64-1;
+ XPRM_PUSH_REF(ctx,r1);
+ return XPRM_RT_OK;
+}
+
 /***************************/
 /* Assignment int64:=int64 */
 /***************************/

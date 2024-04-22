@@ -28,7 +28,7 @@ gcc -Wall -o math.dso -shared -D_REENTRANT -I${XPRESSDIR}/include math.c -lm
 */
 #define VMAJ 1
 #define VMIN 0
-#define VREL 0
+#define VREL 1
 
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +92,7 @@ static int bi_new1r(XPRMcontext ctx,void *libctx);
 static int bi_new1i(XPRMcontext ctx,void *libctx);
 static int bi_zero(XPRMcontext ctx,void *libctx);
 static int bi_one(XPRMcontext ctx,void *libctx);
+static int bi_imax(XPRMcontext ctx,void *libctx);
 static int bi_asgn(XPRMcontext ctx,void *libctx);
 static int bi_asgn_i(XPRMcontext ctx,void *libctx);
 static int bi_pls(XPRMcontext ctx,void *libctx);
@@ -221,6 +222,8 @@ static XPRMdsofct tabfct[]=
          {"@m",1323,XPRM_TYP_EXTN,2,"int64:|int64||int64|",bi_mod},
          {"@m",1324,XPRM_TYP_EXTN,2,"int64:|int64|i",bi_mod_i1},
          {"@m",1325,XPRM_TYP_INT,2,"i|int64|",bi_mod_i2},
+         {"@2",1326,XPRM_TYP_EXTN,0,"int64:",bi_maxi64},
+         {"@3",1327,XPRM_TYP_EXTN,0,"int64:",bi_imax},
 
          {"@=",1350,XPRM_TYP_BOOL,2,"|int64|i",bi_eql_i},
          {"@<",1351,XPRM_TYP_BOOL,2,"|int64|i",bi_lt_i},
