@@ -6,7 +6,7 @@ A Mosel program (or model) is a text file that takes the extension `.mos`, it is
 
 Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/s/fico-xpress-workbench-product-overview) that forms part of the Xpress distribution.  
 
-Syntax highlighting definitions for Mosel have been created for various editors, including [VI/gvim](https://github.com/fico-xpress/mosel-vim-plugin), [JetBrains IntelliJ Platform](https://github.com/fico-xpress/mosel-syntax-highlighting), [Notepad++](https://github.com/fico-xpress/mosel-syntax-highlighting), [Pygment](https://pygments.org/docs/lexers/#lexers-for-the-mosel-language), [UltraEdit](https://www.ultraedit.com/downloads/extras/wordfiles.html), [Rouge](http://rouge.jneen.net).
+Syntax highlighting definitions for Mosel have been created for various editors, including [VI/gvim](https://github.com/fico-xpress/mosel-vim-plugin), [JetBrains IntelliJ Platform](https://github.com/fico-xpress/mosel-syntax-highlighting), [Notepad++](https://github.com/fico-xpress/mosel-syntax-highlighting), [Pygment](https://pygments.org/docs/lexers/#lexers-for-the-mosel-language), [UltraEdit](https://www.ultraedit.com/downloads/extras/wordfiles.html), [Rouge](http://rouge.jneen.net), [VScode](https://marketplace.visualstudio.com/items?itemName=edenporte.mosel-support).
 
 See the Mosel language cheatsheet (in [A4 version](moselsheet_a4.pdf) or [2-page version](moselsheet_2pg.pdf)) for an overview of basic language features and use of the Mosel command line.
 
