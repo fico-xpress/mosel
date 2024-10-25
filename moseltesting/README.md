@@ -57,7 +57,7 @@ File or directory | Description
 [pkgtest.dir](alltests/pkgtest.dir/main.mos) | Mosel file using a package that is built by the test
 
 ## Documentation
-See the [PDF-format documentation](moseltesting.pdf) or [text-format documentation](readme.txt) for the full documentation of this program.
+See the [PDF-format documentation](moseltesting.pdf) or [text-format documentation](moseltestdoc.txt) for the full documentation of this program.
 
 ## Legal
 
