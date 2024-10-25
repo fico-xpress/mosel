@@ -47,10 +47,16 @@ To select tests to be actually processed from this directory it is possible
 to define an inclusion list (TINCL) and an exclusion list (TEXCL): these
 2 parameters are either a list of file patterns (separated by commas) or
 a file name preceded by the symbol '@' (in this file each line is interpreted
-as a pattern and empty or lines starting with '!' or '#' are ignored).
+as a pattern, and empty or lines starting with '!' or '#' are ignored).
 For instance:
 
  mosel moseltest SRCDIR=alltests TINCL='Book/*,unit/*' TEXCL='@toexclude'
+
+Alternatively a subset of the tests can be selected by the labels they define
+(see tag "labels" below): the parameters ONLYLABELS and SKIPLABELS define lists
+of labels (separated by commas). Tests defining any of the labels from ONLYLABELS
+are processed (all others are skipped) and tests defining any of the labels
+from SKIPLABELS are skipped.
 
 A test can be packaged either as a single file (.mos, .c, .java or .mcf),
 as an archive (.tar, .tar.gz, .tgz or .zip) or as a subdirectory (the name
@@ -71,11 +77,13 @@ may be stored:
 
 Working directory structure
 ---------------------------
-The tests are run in a dedicated directory specified via the model parameter 
-WKDIR (default: 'workdir'). 
-Running moseltest will create and populate the working directory with the 
-following contents (please note that unless model parameter KEEPDIR is set 
-to 'true' the working directory will be deleted after each completed test run):
+The program saves its temporary files under a working directory the location of 
+which can be defined by the model parameter WKDIR (default: 'workdir').
+Unless the model parameter KEEPDIR is set to 'true', this temporary directory
+will be deleted at the end of the testing procedure.
+Tests are run by separate Mosel instances: the workers. Each worker is
+executed under its own working directory located under WKDIR (e.g. WKDIR/wk_1), this
+directory is populated with the following content before a test is run:
 - the program to be tested both in source and compiled form (e.g. mos & bim
   file), or
 - in the case of a model, a copy of the corresponding bim file, or
@@ -89,18 +97,50 @@ The environment variables CLASSPATH and MOSEL_DSO are set as necessary,
 in particular modules and packages are searched for in the current directory
 as well as in a session specific modules directory (see tags 'module' and
 'package' below). The location of this directory is recorded in the
-environment variable DSODIR defined by the model parameter DSODIR (default:"dso").
+environment variable DSODIR (it is located under WKDIR/dso).
 The environment variable MOSEL_DSO also includes the content of the parameter
 LIBPATH.
+The environment variable SRCDIR contains the absolute path to the testing
+directory (or file) as set via the model parameter of the same name.
+
 Thanks to the tag 'save' a test may save a copy of a generated file that can
 be used later by another test defining the 'restore' tag. Files handled by
-this mechanism are collected under the DATADIR directory (default:"data") which
-location is recorded in the DATADIR environment variable.
-Both directories DSODIR and DATADIR are deleted at the end of the testing
-procedure unless KEEPDIR is set to 'true'.
+this mechanism are collected under the data directory (located under
+WKDIR/data), its full path can be retrieved from the DATADIR environement
+variable.
 
 Other configuration settings
 ----------------------------
+Parallel execution
+``````````````````
+The model parameter NBW (default value: 1) defines the number of Mosel instances
+(or workers) to use for running the tests.
+Although the order of the tests is not modified, when running several workers,
+tests are executed concurrently: as a consequence the results are not
+necessarily available in the same order and a given test cannot rely on the
+result of its predecessor.
+By default 'moseltest' will delay displaying of results such that order in
+the report does not depend on the number of workers. This behaviour
+can be changed via the model parameter ASYNCOUT (default value: false): when it
+is set to 'true', the result of each test is displayed as soon as it is available.
+
+The order of execution of tests can be controlled at the level of a "group" of
+tests. A group consists of the tests located in a given directory (ignoring
+subdirectories). In a group, a test with a file name that starts with a digit will
+be executed sequentially before the other tests. For instance in the group
+[0t.mos,1t.mos,a.mos,b.mos] the tests 0t.mos and 1t.mos will be run
+sequentially and then a.mos and b.mos will be executed in parallel after 1t.mos
+has completed.
+Additionally the tags (see "moseltest tags" below) 'after' and 'sync' may be
+used to adjust the order of execution of tests.
+The tag 'after' defines the file name (relative to the directory of the current
+test) of a test that must be completed before the current test can be started.
+In our example above, defining this tag with the value 'a.mos' in the test 'b.mos'
+would prevent 'a.mos' and 'b.mos' to be run concurrently.
+The tag 'sync' disables completely parallel execution of a group starting from
+the test that defines it (i.e. all tests are run in sequence independently of
+the number of workers). This tag also guarantees that all tests in this group will be run on the same worker.
+
 Coverage statistics collection
 ``````````````````````````````
 'moseltest' may be used to generate coverage statistics of packages, models
@@ -134,16 +174,21 @@ include a timestamp), otherwise the contents of all files is collected in the
 REPFILE.
 The setting of parameter SHOWLOGS decides whether default streams are copied
 to the console when running moseltest.  
-When generating coverage statistics (parameter COVLST is defined), a summary
+If the model parameter LOGWKR is set to true and multiple workers are in use,
+the worker ID as well as the sequence number on this worker will be reported
+in the logs (e.g. "3#2" indicates that the test was run on worker 3 as the
+2nd test for this worker since its last restart).
+When generating coverage statistics (that is, if parameter COVLST is defined), a summary
 of the statistics is displayed at the end of execution of the testing procedure,
 and the parameter COVREP specifies which additional reports must be produced.
 If the bit 0 (value 1) is set, annotated source files will be produced.
 In this mode a copy of each source file with the extension '.cov' (e.g. mymod.mos.cov)
-is saved into the directory COVDIR (default:"coverage") - in these files each
+is saved into the directory COVDIR (default value: "coverage") - in these files each
 line is preceded by the number of times it has been executed.
 If the bit 1 (value 2) of COVREP is set, the file 'moseltest.info' will be saved
 under COVDIR: this file can be used with 'genhtml' from the 'lcov' tool to
 generate an HTML representation of the coverage statistics.
+If the bit 2 (value 4) of COVREP is set, the file 'moseltest.xml' will be saved under COVDIR: this is a Cobertura XML report file.
 
 xprmsrv server startup
 ``````````````````````
@@ -152,7 +197,8 @@ the start of moseltest then the parameter PIDFILE needs to define the name of
 an empty file to which write access is possible. If such a PIDFILE is specified
 then moseltest will startup an xprmsrv server and use this file to store the 
 process ID of the server in order to be able to stop it when the execution of 
-moseltest is about to terminate.
+moseltest is about to terminate. Additionally the parameter XSRVLOG can be
+stated to select a file that will collect the output of the server.
 
 Execution time limit
 ````````````````````
@@ -200,121 +246,140 @@ files they have to be included in comments. For instance:
 
 The following tags are supported:
 
-skip: boolean value indicating whether the test should be skipped.
-	This can be used to disable a test unconditionally.
-skip_host: space-separated list of host names on which the test must not be run 
-	(i.e. it is skipped when the procedure is run on any of these hosts).
-	Several 'skip_host' can be specified: their values are concatenated.
-skip_sys: list of system names or processor types on which the test must not
-	be run (i.e. it is skipped when the procedure is run on any of these
-	systems).
-	Several 'skip_sys' can be specified: their values are concatenated.
-	Valid system names are: aix darwin linux hp-ux sunos windows
-	The architecture may be appended to the system name. For instance
-	'linux' will cause the test to be skipped on all Linux machines
-	but 'linux64' will keep the test on Linux 32bit.
-	The processor type prefixed by a '-' may also be appended to the
-	system name (e.g. 'linux-x86_64').
-only_host: is the opposite of 'skip_host': the test is run only on the
-	specified hosts.
-only_sys: is the opposite of 'skip_sys': the test is run only on the
-	specified systems (same predefined names as skip_sys).
-build: a list of objects to generate before running the test.
-	This list may contain modules (.dso), packages (.bim) or executables
-	(in this case the 'make' command is used to build them).
-	Several 'build' can be specified: their values are concatenated.
-package: name of a package.
-	The "test" is in fact the source of a package. 'moseltest' will
-	compile this package, rename it according to this tag and save
-	it into the session specific modules directory such that it
-	becomes available for the following tests.
-module: name of a module.
-	The "test" is in fact the source of a module. 'moseltest' will
-	compile this module, rename it according to this tag and save
-	it into the session specific modules directory such that it
-	becomes available for the following tests.
-model: name of a compiled model (no file extension) or an application (ends with '.zip')
-	This tag can only be used in a configuration file (extension .mcf), the
-	"test" is the specified model or application that must be stored in one
-	of the directories stated via LIBPATH.
-compstat: expected compilation status (integer)
-	By default moseltest expects the compilation of a model source to
-	succeed. This tag will be used to test the compiler when a compilation
-	failure is expected.
-parms:  List of parameters passed to the test model. Several 'parms' tags might
-	be stated, the actual parameter string is built by concatenating the
-	different tags. Any parameter settings that are specified via the 
-	'TESTPARAMS' parameter of moseltest are merged with the settings made
-	via 'parms' tags.
-runstat: expected execution status (integer)
-	By default a test is successful after the model execution returns
-	the execution status value 0. This tag specifies an alternative
-	execution status.
-exitcode: expected exit code (integer)
-	By default a test is successful after the model execution returns
-	the execution exit code 0. This tag specifies an alternative
-	exit code.
+
+after: name of a test that must have terminated before the current test can be
+        started. The path to the file is relative to the location of the
+        current test and cannot appear after the current test in the
+        alphabetical order (i.e. test 'a.mos' cannot request to be run after
+        'b.mos').
+build: space-separated list of objects to generate before running the test.
+        This list may contain modules (.dso), packages (.bim) or executables
+        (in this case the 'make' command is used to build them).
+        Several 'build' can be specified: their values are concatenated.
 componly: Boolean indicating whether execution of the test should be skipped.
-	By default, each test is run after having being compiled. If this tag is
-	set to 'true', the procedure is validated after a successful
-	compilation.
-runbefore: the name of a file (.mos, .c, .java) that must be run before the
-	main test program.
-	This program may be used to prepare the running environment for
-	the test (e.g. grab some data from an external source) or to
-	check whether the environment is suitable for the test.
-	An exit status of '2' will make 'moseltest' skip the current
-	test and any other non-zero value will be interpreted as a failure.
-runafter: the name of a file (.mos, .c, .java) that must be run after the
-	main test.
-	This program may be used to validate the execution (e.g. check the
-	content of a result file). A non-zero exit value will be interpreted
-	as a failure.
-outexpect: an extended regular expression that will be searched in the output
-	stream of the test program after its execution. Several 'outexpect'
-	tags may be specified: they are searched in the order of their
-	declaration (i.e. after the first expression has been found, the
-	following one is searched in the remaining part of the document, etc).
-	The test will be successful only if all regular expressions have been
-	found.
+        By default, each test is run after having being compiled. If this tag is
+        set to 'true', the procedure is validated after a successful
+        compilation.
+compstat: expected compilation status (integer)
+        By default moseltest expects the compilation of a model source to
+        succeed. This tag will be used to test the compiler when a compilation
+        failure is expected.
+copy: space-separated list of file names to be copied into the working
+        directory before running the test.
 errexpect: similar as 'outexpect' but expressions are searched in the error
-	stream.
+        stream.
+exitcode: expected exit code (integer).
+        By default a test is successful after the model execution returns
+        the execution exit code 0. This tag specifies an alternative
+        exit code.
+labels: space-separated list of labels associated to this test.
+        The moseltest parameter ONLYLABELS defines a list of labels that tests
+        must define to be processed (i.e. a test is kept if it defines any of
+        the labels from this list). Similarly, parameter SKIPLABELS defines a
+        list of labels for tests that must be skipped (i.e. a test defining any
+        flag of this list will be skipped).
+model: name of a compiled model (no file extension) or an application (ends with '.zip')
+        This tag can only be used in a configuration file (extension .mcf), the
+        "test" is the specified model or application that must be stored in one
+        of the directories stated via LIBPATH.
+module: name of a module.
+        The "test" is in fact the source of a module. 'moseltest' will
+        compile this module, rename it according to this tag and save
+        it into the session specific modules directory such that it
+        becomes available for the following tests.
+newinst: Boolean indicating whether a new Mosel instance must be started for
+        this particular test.
 noerrmsg: Boolean indicating that any message sent to the error stream will
         cause a test failure (by default the error stream is ignored if
-	execution succeeded).
-restart: Boolean indicating whether the Mosel instance must be restarted after
-	this test.
-	All tests are run on the same Mosel instance. When this tag is set
-	to 'true', the current instance is terminated and a new one is
-	started for the following tests.
-newinst: Boolean indicating whether a new Mosel instance must be started for
-	this particular test.
-setenv: define an environment variable for the process running the Mosel
-	instance. The syntax of this definition is:
-	[sysname.]varname=value
-	Note that 'value' may contain Unix variable references (e.g. ${XPRESS})
-	that are expanded before definition.
-	If a 'sysname' is used (see skip_sys for the list of system names) the
-	variable will be defined only for the corresponding system.
-	When environment variables are defined, the Mosel instance is
-	systematically restarted and terminated at the end of the run
-	(independently of the tags 'restart' and 'newinst').
-save: name of a file to be saved for future use.
-	The operation is performed after execution of the model when it is
-	successful. The file is copied to the directory identified by DATADIR.
-	Several 'save' tags may be stated.
-restore: name of a file to restore from a previous 'save' operation.
-	The file must have been saved by a previous test. The file copy is
-	performed before execution of the test. The file is taken from the
-	directory identified by DATADIR. Several 'restore' tags may be used.
+        execution succeeded).
+outexpect: an extended regular expression that will be searched in the output
+        stream of the test program after its execution. Several 'outexpect'
+        tags may be specified: they are searched in the order of their
+        declaration (i.e. after the first expression has been found, the
+        following one is searched in the remaining part of the document, etc).
+        The test will be successful only if all regular expressions have been
+        found.
+only_host: is the opposite of 'skip_host': the test is run only on the
+        specified hosts.
+only_sys: is the opposite of 'skip_sys': the test is run only on the
+        specified systems (same predefined names as skip_sys).
+package: name of a package.
+        The "test" is in fact the source of a package. 'moseltest' will
+        compile this package, rename it according to this tag and save
+        it into the session specific modules directory such that it
+        becomes available for the following tests.
+parms:  comma-separated list of parameters passed to the test model.
+        Several 'parms' tags might be stated, the actual parameter string is
+        built by concatenating the different tags. Any parameter settings that
+        are specified via the 'TESTPARAMS' parameter of moseltest are merged
+        with the settings made via 'parms' tags.
 required: minimum or maximum version number of a component that is required
-	for running a test. Multiple conditions can be stated for the same or
-	different components. The operators '<' and '>' mean '<=' and '>=' 
-	respectively. The extension needs to be specified if a component has
-	both, a DSO and a BIM portion of the same name.
-	Format: mosel|module[.dso]|package[.bim] <|> MM[.mm[.rr]] 
-copy: name of a file to be copied into the working directory before running
-  the test
+        for running a test. Multiple conditions can be stated for the same or
+        different components. The operators '<' and '>' mean '<=' and '>=' 
+        respectively. The extension needs to be specified if a component has
+        both, a DSO and a BIM portion of the same name.
+        Format: mosel|module[.dso]|package[.bim] <|> MM[.mm[.rr]] 
+restart: Boolean indicating whether the Mosel instance must be restarted after
+        this test.
+        All tests are run on the same Mosel instance. When this tag is set
+        to 'true', the current instance is terminated and a new one is
+        started for the following tests.
+restore: name of a file to restore from a previous 'save' operation.
+        The file must have been saved by a previous test. The file copy is
+        performed before execution of the test. The file is taken from the
+        directory identified by DATADIR. Several 'restore' tags may be used.
+runafter: the name of a mosel file that must be run after the
+        main test.
+        This program may be used to validate the execution (e.g. check the
+        content of a result file). A non-zero exit value will be interpreted
+        as a failure.
+runbefore: the name of a mosel file that must be run before the
+        main test program.
+        This program may be used to prepare the running environment for
+        the test (e.g. grab some data from an external source) or to
+        check whether the environment is suitable for the test.
+        An exit status of '2' will make 'moseltest' skip the current
+        test and any other non-zero value will be interpreted as a failure.
+runstat: expected execution status (integer)
+        By default a test is successful after the model execution returns
+        the execution status value 0. This tag specifies an alternative
+        execution status.
+save: name of a file to be saved for future use.
+        The operation is performed after execution of the model when it is
+        successful. The file is copied to the directory identified by DATADIR
+        and can be retrieved by other tests using the 'restore' tag.
+        Several 'save' tags may be stated.
+setenv: define an environment variable for the process running the Mosel
+        instance. The syntax of this definition is:
+        [sysname.]varname=value
+        Note that 'value' may contain Unix variable references (e.g. ${XPRESS})
+        that are expanded before definition.
+        If a 'sysname' is used (see skip_sys for the list of system names) the
+        variable will be defined only for the corresponding system.
+        When environment variables are defined, the Mosel instance is
+        systematically restarted and terminated at the end of the run
+        (independently of the tags 'restart' and 'newinst').
+skip: boolean value indicating whether the test should be skipped.
+        This can be used to disable a test unconditionally.
+skip_host: space-separated list of host names on which the test must not be run 
+        (i.e. it is skipped when the procedure is run on any of these hosts).
+        Several 'skip_host' can be specified: their values are concatenated.
+skip_sys: space-separated list of system names or processor types on which the
+        test must not be run (i.e. it is skipped when the procedure is run on
+        any of these systems).
+        Several 'skip_sys' can be specified: their values are concatenated.
+        Valid system names are: aix darwin linux hp-ux sunos windows
+        The architecture may be appended to the system name. For instance
+        'linux' will cause the test to be skipped on all Linux machines
+        but 'linux64' will keep the test on Linux 32bit.
+        The processor type prefixed by a '-' may also be appended to the
+        system name (e.g. 'linux-x86_64').
+sync: Boolean activating the synchronous mode on the current group of tests.
+        If a test defines this tag, all following tests in the same directory
+        will be run sequentially after the current one on the same worker.
+
+Several instances of a tag expecting a list can be stated: its actual value 
+will be the concatenation of all values.
 
 
 Usage examples
@@ -344,8 +409,8 @@ Here are some examples of how to use the 'moseltest' tags:
   following tag:
  !*! package toolbox
   Because of this tag, after compilation the package is copied into
-  the directory DSODIR as 'toolbox.bim' and it becomes available for the
-  following tests.
+  the dso directory (under WKDIR/dso) as 'toolbox.bim' and it
+  becomes available for the following tests.
 
 - A test is expected to fail (Mosel status 11 - for runtime error) and the
   error stream must report error "invalid parameter". This can be achieved
@@ -366,7 +431,7 @@ Here are some examples of how to use the 'moseltest' tags:
 
 - Contents of a .mcf file to run model 'mymodel.bim' (located on the LIBPATH) 
   setting 2 runtime parameters and checking the produced output (the model 
-  displays the parameter values).
+  displays the parameter values):
  !*! model:mymodel
  !*! parms:Q=3,G='hello'
  !*! outexpect G=hello
@@ -374,24 +439,30 @@ Here are some examples of how to use the 'moseltest' tags:
 
 - Contents of an .mcf file to run the compiled .bim contained in the specified
   Insight app archive, the output file 'usrinputdump.txt' produced by this run
-  is stored for later use by other tests 
+  is stored for later use by other tests: 
  !*! model:explapp.zip
  !*! save usrinputdump.txt
 
   A second .mcf file for the same Insight app may specify a different parameter
   configuration by which the app reads in the previously saved file that needs
-  to be copied into the test working directory via 'restore'.
+  to be copied into the test working directory via 'restore':
  !*! model:explapp.zip
  !*! restore usrinputdump.txt
  !*! parms:MODE=USRRUN
 
-- Run a test with Mosel versions 5.2-5.6 only, if mmxprs version is at least 3.
+- Run a test with Mosel versions 5.2-5.6 only, if mmxprs version is at least 3:
  !*! required:mosel > 5.2, mosel < 5.6
  !*! required:mmxprs > 3
 
-- A test requires an additional file to be copied into the working directory.
+- A test requires an additional file to be copied into the working directory:
  !*! copy myfile.dat
 
+- A test defined labels 'needodbc' and 'needmysql':
+ !*! labels needodbc needmysql
+  Using parameter 'ONLYLABELS=needodbc' will select all test with the flag
+  'needodbc' and stating 'ONLYLABELS=needodbc SKIPLABELS=needmysql' will keep
+  only tests defining 'needodbc' and not 'needmysql' like in the declaration
+  above.
 
 Return value
 ------------
