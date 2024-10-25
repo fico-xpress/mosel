@@ -3,7 +3,8 @@
   ``````````````````
   General Mosel testing framework
 
-  author: Y. Colombani July 2015
+  authors: Y. Colombani
+           L. Bertacco
 
   (c) Copyright 2015-2024 Fair Isaac Corporation
 
@@ -21,26 +22,26 @@
 
 *******************************************************!)
 model moseltest
-version 0.7.1
-uses 'mmsystem','mmjobs'
+version 0.10.1
+uses 'mmsystem','mmjobs','mmxml'
 
 parameters
  SRCDIR="alltests"  ! Location of the tests or test file
  TINCL='*'          ! List of file patterns for inclusion
  TEXCL=''           ! List of file patterns for exclusion
+ SKIPLABELS=''      ! list of labels to skip
+ ONLYLABELS=''      ! list of labels to process (everything else is skipped)
  WKDIR="workdir"    ! Temporary directory for cwd
- DATADIR="data"     ! Temporary directory for saving data files
- DSODIR="dso"       ! Temporary dso directory
+ NBW=1              ! Number of worker instances
+ ASYNCOUT=false     ! When NBW>1: display result asap
  LIBPATH=""         ! Paths to additional dso/bim (same syntax as $PATH)
- CONFLINE="!*!"     ! Tag for configuration lines
- ERR="err.txt"      ! Error log file (inside of workdir)
- OUT="out.txt"      ! Output file (inside of workdir)
  BASEREP="report"   ! Report file (after execution, in current directory)
  REPDATED=false     ! Generate unique report file using timestamp
  REPDATEFMT=""      ! Timestamp format for dated report files, eg "%.y%0m%0d%0H%0M%0S"
  REPRESET=true      ! Clear report file (false=>append to existing)
  KEEPDIR=false      ! Keep workdir/dsodir at the end of run
  PIDFILE=""         ! PID file for the xprmsrv server (''=>no xprmsrv)
+ XSRVLOG=""         ! Log file for the xprmsrv server
  REPFILE=""         ! Report file (replaces BASEREP when defined) '-' to disable
  MAXWAIT=60*10      ! Maximum time to wait for an execution
  VALGRIND=false     ! Run tests with valgrind
@@ -50,30 +51,36 @@ parameters
  MAXLOGLEN=20000    ! Maximum length of a embedded log file. -1 to disable
  SAVELOGS=false     ! Keep example log even when successful
  SHOWLOGS=false     ! Copy default streams to console when running tests
+ COLOR=0            ! coloured result: 0:none, 1:normal, 2:bright
  LOGDIR=""          ! If defined, create separate log file per test
  TESTPARAMS=""      ! Parameters to pass to the test models
  HAVENMAKE=true     ! Windows: assume nmake is available (use make otherwise)
+ LOGWKR=false       ! report test to worker assignments (for debugging)
 
  COVLST=""          ! List of package/model/app names for coverage (separated by spaces)
  COVSRC=""          ! Paths to package/model sources (default: LIBPATH)
  COVDIR="coverage"  ! Directory where to save coverage reports
- COVREP=0           ! Format of the reports: 1: annotated source files; 2:lcov info file (3:both)
+ COVREP=0           ! Format of the reports: 1: annotated source files; 2:lcov info file, 4: cobertura xml file (7:all)
 end-parameters
 
 declarations
+ CONFLINE="!*!"     ! Tag for configuration lines
  DIRSEP=getdirsep
  PATHSEP=getpathsep
+ DATADIR:string     ! Temporary directory for saving data files
+ DSODIR:string      ! Temporary dso directory
+ OUTDIR:string      ! where log files are stored during tests
  OPTTYPES:array(OPTNAMES:set of string) of string
- Allfiles:list of text
- MOPT:dynamic array(set of string) of text
- minst:Mosel
- mdr:Model
+ Allfiles:list of string  ! Files to tests
+ pending:list of string   ! being tested, delayed or waiting for last logging
+ delayed: list of string  ! sublist of 'pending' waiting for another test
  srcdir:text
- testdir:text
  excludepat=["*.c9"+DIRSEP+"*"]
+ labels_skip,labels_only:set of string
  pmvers:dynamic array(string) of integer
  pmvers_txt:dynamic array(string) of text
  output_fd:integer
+ cred,cgreen,cyellow,cblack:string
 
  sysname:string
  sysproc:string
@@ -90,6 +97,55 @@ declarations
  env_dsopath:text
  env_bimpfx:text
  TPLEN=LINELEN-22
+
+ s_worker=
+        record
+	  id:integer
+	  tnum:integer          ! test associted to this worker
+	  file:string		! file name for this test
+	  minst:Mosel
+	  mdr:Model
+	  workdir:string
+	  onceonly:boolean      ! restart after running the example
+	  nbtest:integer	! number of tests run by thus worker
+	  queue:list of string	! pending tests assigned to this worker
+	end-record
+ workers:array(wrng:range) of s_worker
+ freewks:set of integer
+
+ ! Test status
+ TST_DELAYED=-5	! waiting for another test to complete
+ TST_READY=-4	! ready to start
+ TST_TOSTART=-3	! just before test starts
+ TST_RUNNING=-2	! during execution
+ TST_TIMEOUT=-1	! after timeout (waiting to end)
+ TST_SUCCESS=0
+ TST_SKIPPED=1
+ TST_ERROR=2	! something went wrong before/after the test
+ TST_FAILED=3
+
+ ! Test file type
+ TFT_UNKNOWN=-1
+ TFT_MOS=0
+ TFT_C=1
+ TFT_JAVA=2
+ TFT_BIM=3
+
+ s_test=
+        record
+	  num:integer
+	  nextingroup:string
+	  after:string     ! test to be done before this one
+	  filetype:integer ! see TFT_* above
+	  opts:dynamic array(set of string) of text
+	  label:text
+	  wid:integer      ! worker for this test
+	  wnbt:integer     ! job number for this worker
+	  msg:text
+	  status:integer   ! see TST_* above
+	  time:real        ! <0 while running
+	end-record
+ tests:array(testfiles:set of string) of s_test
 
  s_srcfile=
 	record
@@ -116,24 +172,6 @@ declarations
  MSL_WAR=1
  MSL_ERR=2
 
- ! Test status
- TST_TOSTART=-1	! before test starts
- TST_SUCCESS=0
- TST_SKIPPED=1
- TST_ERROR=2	! something went wrong before/after the test
- TST_FAILED=3
-
- ! test result
- s_tres=
-	record
-	  label:text
-	  num:integer
-	  msg:text
-	  status:integer
-	  time:real
-	end-record
-
- testres:s_tres
  nbfailed:integer
 
  ! Report format API
@@ -141,35 +179,45 @@ declarations
  fatalerror:procedure(integer,text)
  suitestarted:procedure(text,integer)
  suitefinished:procedure
- logtest:procedure(s_tres)
+ logtest:procedure(boolean,s_test)
 
 end-declarations
 
 ! Prototypes
 declarations
- procedure logbeforetest(tres:s_tres,num:integer,fname:text)
- procedure logaftertest(tres:s_tres)
- function processtest(f:text,ft:integer,opts:array(string) of text,tres:s_tres,testdir:text):boolean
- procedure startinstance
- procedure endinstance(discon:boolean)
+ procedure printbanner
+ function getnig(f:string,n:integer):string
+ function successors(f:string):list of string
+ function chooseworker(fw:set of integer):integer
+ procedure fixtestorder(l:list of string)
+ procedure logbeforetest(tres:s_test)
+ procedure logaftertest(tres:s_test)
+ function preparetest(f:string,tres:s_test,totest:text,testdir:text):integer
+ procedure begintest(f:string,wid:integer,tres:s_test)
+ procedure endtest(tres:s_test)
+ procedure attachworker(f:string,tres:s_test)
+ procedure detachworker(tres:s_test)
  function mergeparms(p1:text,p2:text):text
- procedure run_mdr(parms:text,tres:s_tres)
- function execmos(torun:text,parms:text):integer
- function dobuild(tobuild:text):boolean
- function gettotest(path:text,incl:text,excl:text):list of text
+ function dorun(tres:s_test,f:text):boolean
+ function execmos(wkr:s_worker,torun:text,parms:text):integer
+ function dobuild(wkr:s_worker,tobuild:text):boolean
+ function gettotest(path:text,incl:text,excl:text):list of string
  function getfltlist(flt:text): list of string
  procedure cleardir(p:text,rmd:boolean)
- procedure cleardir(p:text,rmd:boolean,keeperr:boolean)
  procedure copydir(src:text,dst:string)
- function findmain(wkdir:text,totest:text):integer
+ function findmain(wkdir:string,totest:text):integer
  function findmodel(wkdir:text,mtt:text):text
  function expandapp(wkdir:text,path:text):text
- procedure getopts(f:text,opts:array(set of string) of text)
+ procedure gettags(f:text,opts:array(set of string) of text)
  procedure defsetenv
  procedure updenv(env:text,spe:set of string)
  function expenv(ev:text):text
- function mkuxpath(p:text):text
- function toskip(opts:array(set of string) of text,tres:s_tres):boolean
+ function isnonempty(f:string):boolean
+ function mkuxpath(p:string):text
+ function mklabpath(p:string):text
+ function outlog(tres:s_test):string
+ function errlog(tres:s_test):string
+ function toskip(prevstat:integer,tres:s_test):boolean
  function splicfgline(line:text,val:text):string
  function filexists(f:text):boolean
  function direxists(f:text):boolean
@@ -177,19 +225,20 @@ declarations
  function splitlist(t:text,sc:integer):list of text
  function splitlist(t:text):list of text
  function splitset(t:text):set of string
- procedure savelogs(f:text)
+ procedure showlogs(tres:s_test)
+ procedure savelogs(tres:s_test)
  procedure setsysdep
- function safeload(m:Model,bf:string):boolean
- function safecompile(opts:string,src:string,dst:string):integer
+ function safeload(wkr:s_worker,bf:text):boolean
+ function safecompile(wkr:s_worker,opts:string,src:text,dst:text):integer
  procedure startxsrv
  procedure stopxsrv
- function domake(f:text):boolean
- function dorun(f:text):boolean
+ function domake(wkr:s_worker,f:text):boolean
  function getpmvers(p:string):integer
  function logfile2text(f:string):text
+ function system_log(cmd:string,args:...):boolean
  function build_lstdir(srcpath:string):list of text
  procedure build_srcfiles(sfs:array(string) of s_srcfile,pkgs:list of text)
- procedure savecovres(sfs:array(sf:set of string) of s_srcfile)
+ procedure savecovres(wkr:s_worker,sfs:array(sf:set of string) of s_srcfile)
  procedure reportcov(sfs:array(sf:set of string) of s_srcfile,covdir:text,mode:integer)
 
  procedure tty_init
@@ -199,10 +248,10 @@ declarations
  procedure jut_init
 end-declarations
 
-! Known options (types: txt,int,boo,dbl,lst,lns):
-! option lst: same as 'txt' but can appear several times (concatenated - sep=' ')
-! option lsp: same as 'txt' but can appear several times (concatenated - sep=',')
-! option lns: same as 'txt' but can appear several times (concatenated - sep='\n')
+! Known tags (types: txt,int,boo,dbl,lst,lns):
+! tag lst: same as 'txt' but can appear several times (concatenated - sep=' ')
+! tag lsp: same as 'txt' but can appear several times (concatenated - sep=',')
+! tag lns: same as 'txt' but can appear several times (concatenated - sep='\n')
  OPTTYPES("runbefore"):="txt"	! model to run before main - exit 2 to skip test
  OPTTYPES("runafter"):="txt"	! model to run after main test
  OPTTYPES("outexpect"):="lns"	! regex to be found in output stream (in order)
@@ -222,6 +271,7 @@ end-declarations
  OPTTYPES("skip_sys"):="lst"	! list of system names where test is skipped
  OPTTYPES("only_host"):="lst"	! list of host names where test is run
  OPTTYPES("only_sys"):="lst"	! list of system names where test is run
+ OPTTYPES("labels"):="lst"	! list of labels associated to the test
  OPTTYPES("setenv"):="lns"	! environment variable [sys.]<env>=<value>
  OPTTYPES("noerrmsg"):="boo"	! if true: error stream must be clear after run
  OPTTYPES("parms"):="lsp"	! list of parameters passed to the test model
@@ -229,6 +279,8 @@ end-declarations
  OPTTYPES("save"):="lns"	! save specified file for use by another test
  OPTTYPES("restore"):="lns"	! restore specified file from a previous test
  OPTTYPES("required"):="lsp"	! list of packages/modules requited to run the test
+ OPTTYPES("after"):="txt"	! test that must have complete before this one
+ OPTTYPES("sync"):="boo"	! if true: synchronous mode to the group
  finalise(OPTNAMES)
 
  output_fd:=getfid(F_OUTPUT)
@@ -239,31 +291,89 @@ end-declarations
   "TAP13": tap13_init
   "JUNIT": jut_init
   else
-    writeln("Unknown reporting format ",RFMT," - supported formats: TC,TAP,TAP13,JUNIT. Aborting")
+    writeln("Moseltest v",getparam("model_version"),
+            "\nUnknown reporting format ",RFMT," - supported formats: TC,TAP,TAP13,JUNIT. Aborting")
     exit(1)
+ end-case
+
+ labels_skip:=union(t in splitlist(SKIPLABELS,getchar(","))) {string(t)}
+ labels_only:=union(t in splitlist(ONLYLABELS,getchar(","))) {string(t)}
+
+ case COLOR of
+  1: do
+   cred:="\033[31m"
+   cgreen:="\033[32m"
+   cyellow:="\033[33m"
+   cblack:="\033[0m"
+  end-do
+  2: do
+   cred:="\033[91m"
+   cgreen:="\033[92m"
+   cyellow:="\033[93m"
+   cblack:="\033[0m"
+  end-do
  end-case
 
 ! System specific settings
  setsysdep
+ if not exists(pmvers_txt("mosel")) then
+  pmvers_txt("mosel"):="?"
+  printbanner
+  fatalerror(1,"The 'mosel' executable cannot be found")
+ end-if
 
 ! Here we go
  srcdir:=SRCDIR
  Allfiles:=gettotest(srcdir,TINCL,TEXCL)
  if Allfiles.size<1 then
+  printbanner
   fatalerror(1,"Nothing to test")
  end-if
+ testfiles:=set(Allfiles)
+ finalise(testfiles)
+ forall(f in Allfiles,cnt as counter,t=tests(f)) do
+  t.num:=cnt
+  t.wid:=-1
+  t.label:=mklabpath(f)
+  t.status:=TST_READY
+  t.filetype:=TFT_UNKNOWN
+  t.nextingroup:=getnig(f,cnt)
+  if getchar(pathsplit(SYS_FNAME,f)) in getchar('0')..getchar('9') and
+     t.nextingroup<>'' then
+   pending+=[f]
+  end-if
+ end-do
+
+ fixtestorder(pending)
+ reset(pending)
 
  makedir(WKDIR)
  cleardir(WKDIR,false)
+ DSODIR:=WKDIR+DIRSEP+"dso"
  makedir(DSODIR)
- cleardir(DSODIR,false)
+ DATADIR:=WKDIR+DIRSEP+"data"
  makedir(DATADIR)
- cleardir(DATADIR,false)
+ OUTDIR:=WKDIR+DIRSEP+"logs"
+ makedir(OUTDIR)
+ 
+ wrng:=1..if(NBW<2,1,NBW)
+ finalise(wrng)
+ freewks:=wrng
+ forall(i in wrng,wkr=workers(i)) do
+  wkr.tnum:=-1
+  wkr.id:=i
+  wkr.mdr.uid:=i
+  wkr.workdir:=WKDIR+DIRSEP+"wk_"+i
+  makedir(wkr.workdir)
+ end-do
 
+ env_tmpdir:=expandpath(getparam("tmpdir")+"/tmp")
+ makedir(env_tmpdir)
+ env_srcdir:=expandpath(SRCDIR)
  env_dsodir:=expandpath(DSODIR)
  env_datadir:=expandpath(DATADIR)
  bim_dirs:=build_lstdir(LIBPATH)
- env_dsopath:=expandpath(WKDIR)+PATHSEP+"."+PATHSEP+jointext(bim_dirs,PATHSEP)+PATHSEP+expandpath(DSODIR)
+ env_dsopath:="."+PATHSEP+jointext(bim_dirs,PATHSEP)+PATHSEP+expandpath(DSODIR)
  env_clspath:=expandpath(getenv("XPRESSDIR")+"/lib/xprm.jar")+PATHSEP+
     expandpath(getenv("XPRESSDIR")+"/lib/xprd.jar")+PATHSEP+
     expandpath(getenv("XPRESSDIR")+"/lib/bindrv.jar")+PATHSEP+'.'
@@ -276,13 +386,10 @@ end-declarations
   env_bimpfx:=""
  end-if
 
- suitestarted(mkuxpath(SRCDIR),Allfiles.size)
- logmsg(MSL_INF,"Moseltest v",getparam("model_version"),"\n",
-                "Running Mosel v",pmvers_txt('mosel')," on `",syshost,
-                "' (",sysname," ",sysarch,"bit)\n",
-                "Tests from: ",SRCDIR,
-		if(TINCL<>"" and TINCL<>"*","\nIncluding only: "+TINCL,""),
-		if(TEXCL<>"","\nExcluding: "+TEXCL,""))
+ defsetenv
+
+ suitestarted(mklabpath(SRCDIR),Allfiles.size)
+ printbanner
 
  if LOGDIR<>"" and not direxists(LOGDIR) then
   makepath(LOGDIR)
@@ -298,80 +405,113 @@ end-declarations
   coverage:=true
  end-if
 
- defsetenv
  startxsrv
 
  nbfailed:=0
- forall(f in Allfiles,cnt as counter) do
-  logbeforetest(testres,cnt,f)
-  testres.label:=mkuxpath(f)
-  cleardir(WKDIR,false,true)
-  testdir:='.'
-  if endswith(f,".mos") then
-   fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f,testdir)
-   ftype:=0
-  elif endswith(f,".c") then
-   fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f,testdir)
-   ftype:=1
-  elif endswith(f,".java") then
-   fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f,testdir)
-   ftype:=2
-  elif endswith(f,".tar") then
-   untar(srcdir+'/'+f,WKDIR)
-   ftype:=findmain(WKDIR,totest)
-  elif endswith(f,".tgz") or endswith(f,".tar.gz")then
-   untar("zlib.gzip:"+srcdir+'/'+f,WKDIR)
-   ftype:=findmain(WKDIR,totest)
-  elif endswith(f,".zip") then
-   unzip(srcdir+'/'+f,WKDIR)
-   ftype:=findmain(WKDIR,totest)
-  elif endswith(f,".dir") then
-   copydir(srcdir+'/'+f,WKDIR)
-   ftype:=findmain(WKDIR,totest)
-  elif endswith(f,".mcf") then
-   fcopy(srcdir+'/'+f,WKDIR)
-   totest:=pathsplit(SYS_FNAME,f,testdir)
-   ftype:=3
-  else
-   testres.status:=TST_ERROR
-   testres.msg:="Unexpected file extention"
-   logaftertest(testres)
-   next
-  end-if
+ while(Allfiles.size>0 or pending.size>0) do
+  ! Process all events to record test termination
+  while(not isqueueempty) do
+   evt:=getnextevent
+   case evt.class of
+     EVENT_END:
+	with f=workers(evt.fromuid).file do
+	 endtest(tests(f))
+         if ASYNCOUT then
+          logaftertest(tests(cutelt(pending,findfirst(pending,f))))
+         end-if
+	end-do
+     EVENT_TIMER:
+	with evv=integer(evt.value),wkr=workers(evv) do
+     	 if wkr.tnum>0 then
+	  if tests(wkr.file).status<>TST_TIMEOUT then
+	   tests(wkr.file).status:=TST_TIMEOUT
+           stop(wkr.mdr)
+	   ! give an addition 20s to terminate
+           if settimer(evv,20000,false)<>evv then
+	    fatalerror(2,"failed to set timer")
+	   end-if
+	  else
+	   ! model had MAXWAIT+20s to complete: kill the instance
+           kill(wkr.minst)
+	  end-if
+	 else
+          logmsg(MSL_INF,"Timer event ignored:",evt)
+	 end-if
+	end-do
+     else
+      logmsg(MSL_INF,"Event ignored:",evt)
+   end-case
+  end-do
 
-  if totest.size>0 then
-   getopts(totest,MOPT)
-   if ftype=3 then
-    totest:=findmodel(WKDIR,MOPT("model"))
+  ! Log all terminated tests (respecting order)
+  while(pending.size>0 and tests(getfirst(pending)).status>=TST_SUCCESS) do
+   logaftertest(tests(cutfirst(pending)))
+  end-do
+
+  if freewks.size=0 then
+   ! no worker available - if something is pending, wait
+   if pending.size>0 then
+    wait
+   ! else we have finished
    end-if
-  end-if
+  else
+   with wid=chooseworker(freewks) do
+    nexttorun:=''
+    ! Pick the first test of the queue for the selected worker (if any)
+    if workers(wid).queue.size>0 then
+     nexttorun:=cutfirst(workers(wid).queue)
+    else
+     ! then check that any of the delayed tests can be run
+     forall(t in delayed)
+      if tests(t).after<>'' and tests(tests(t).after).status>=TST_SUCCESS then
+       nexttorun:=cutelt(delayed,findfirst(delayed,t))
+       break
+      end-if
+    end-if
 
-  if totest.size<1 then
-   testres.status:=TST_ERROR
-   testres.msg:="Main file was not found"
-   logaftertest(testres)
-   next
-  end-if
+    ! Otherwise get the next test from the main list
+    if nexttorun='' and Allfiles.size>0 then
+     nexttorun:=cutfirst(Allfiles)
+     pending+=[nexttorun]
+    end-if
 
-  if not toskip(MOPT,testres) and 
-     (processtest(totest,ftype,MOPT,testres,testdir) or SAVELOGS) then
-   savelogs(f)
+    if nexttorun<>'' then
+     with tres=tests(nexttorun) do
+      begintest(nexttorun,wid,tres)
+      if tres.status=TST_DELAYED then
+       delayed+=[nexttorun]
+      else
+       if tres.status<>TST_RUNNING then
+        endtest(tres)
+        if ASYNCOUT then
+         logaftertest(tests(cutelt(pending,findfirst(pending,nexttorun))))
+        end-if
+       end-if
+       ! this test enables synchronous mode: move all successors
+       if tres.opts('sync')="true" then
+        forall(t in successors(nexttorun),tp=findfirst(Allfiles,t)|tp>0) do
+	 workers(wid).queue+=[t]
+	 pending+=[t]
+         asproc(cutelt(Allfiles,tp))
+	end-do
+       end-if
+      end-if
+     end-do
+    ! could not find any test to run - wait if any worker is busy
+    elif freewks.size<NBW then
+     wait
+    end-if
+   end-do
   end-if
-
-  logaftertest(testres)
  end-do
 
- disconnect(minst)
+ forall(i in wrng)
+  disconnect(workers(i).minst)
  stopxsrv
- if KEEPDIR and Allfiles.size=1 then
-  logmsg(MSL_WAR,"Warning: directories '",WKDIR,"', '",DATADIR,"' and '",DSODIR,"' are not deleted")
+ if KEEPDIR then
+  logmsg(MSL_WAR,"Warning: directory '",WKDIR,"' is not deleted")
  else
   cleardir(WKDIR,true)
-  cleardir(DSODIR,true)
-  cleardir(DATADIR,true)
  end-if
 
  if SAVELOGS then
@@ -390,280 +530,510 @@ end-declarations
  exit(if(nbfailed>0,1,0))
 
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!*********************************
+!* Display program banner
+!*********************************
+procedure printbanner
+ logmsg(MSL_INF,"Moseltest v",getparam("model_version"),"\n",
+                "Running Mosel v",pmvers_txt('mosel')," on `",syshost,
+                "' (",sysname," ",sysarch,"bit)\n",
+                "Tests from: ",SRCDIR,
+		if(LOGDIR<>"","\nLog files will be saved under '"+LOGDIR+"'",""),
+		if(NBW>1,"\nWorker instances: "+NBW,""),
+		if(ONLYLABELS<>'',"\nSelecting only labels: "+ONLYLABELS,""),
+		if(SKIPLABELS<>'',"\nSkipping labels: "+SKIPLABELS,""),
+		if(TINCL<>"" and TINCL<>"*","\nIncluding only: "+TINCL,""),
+		if(TEXCL<>"","\nExcluding: "+TEXCL,""))
+end-procedure
+
+!*********************************
+!* Find the next test in a group
+!*********************************
+function getnig(f:string,n:integer):string
+ bn:=pathsplit(SYS_DIR,f)
+ if bn='.' then
+  forall(i in (n+1)..Allfiles.size,nig=Allfiles(i))
+   if findtext(nig,DIRSEP,1)=0 then
+    returned:=nig
+    break
+   end-if
+ else
+  forall(i in (n+1)..Allfiles.size,nig=Allfiles(i))
+   if not startswith(nig,bn) then
+    break
+   elif pathsplit(SYS_DIR,nig)=bn then
+    returned:=nig
+    break
+   end-if
+ end-if
+end-function
+
+!*****************************************
+!* Get the list of successors in a group
+!*****************************************
+function successors(f:string):list of string
+ f:=tests(f).nextingroup
+ while(f<>"") do
+  returned+=[f]
+  f:=tests(f).nextingroup
+ end-do
+end-function
+
+!**********************************************
+!* Choose a worker (priority to worker queues)
+!**********************************************
+function chooseworker(fw:set of integer):integer
+ returned:=getelt(fw)
+ forall(w in fw|workers(w).queue.size>0) do
+  returned:=w
+  break
+ end-do
+end-function
+
+!***********************************
+!* set order of tests from names
+!***********************************
+procedure fixtestorder(l:list of string)
+ forall(f in l) do
+  g:=tests(f).nextingroup
+  repeat
+   tests(g).after:=f
+   g:=tests(g).nextingroup
+  until g=''
+ end-do
+end-procedure
+
 !***************************
 !* Logging before the test
 !***************************
-procedure logbeforetest(tres:s_tres,num:integer,fname:text)
- reset(tres)
- tres.status:=TST_TOSTART
- tres.num:=num
- tres.label:=mkuxpath(fname)
- logtest(tres)
+procedure logbeforetest(tres:s_test)
+ tres.time:=0
+ logtest(true,tres)
  fflush
 end-procedure
 
 !***************************
 !* Logging after the test
 !***************************
-procedure logaftertest(tres:s_tres)
+procedure logaftertest(tres:s_test)
  if tres.status>=TST_ERROR: nbfailed+=1
- logtest(tres)
+ if SAVELOGS or tres.status>TST_SKIPPED: savelogs(tres)
+ logtest(false,tres)
+ fdelete(outlog(tres))
+ fdelete(errlog(tres))
  fflush
 end-procedure
+
+!*********************************
+!* Prepare test before execution
+!*********************************
+function preparetest(f:string,tres:s_test,totest:text,testdir:text):integer
+ tres.status:=TST_TOSTART
+ testdir:='.'
+ workdir:=workers(tres.wid).workdir
+ cleardir(workdir,false)
+ if endswith(f,".mos") then
+  fcopy(srcdir+'/'+f,workdir)
+  totest:=pathsplit(SYS_FNAME,f,testdir)
+  returned:=TFT_MOS
+ elif endswith(f,".c") then
+  fcopy(srcdir+'/'+f,workdir)
+  totest:=pathsplit(SYS_FNAME,f,testdir)
+  returned:=TFT_C
+ elif endswith(f,".java") then
+  fcopy(srcdir+'/'+f,workdir)
+  totest:=pathsplit(SYS_FNAME,f,testdir)
+  returned:=TFT_JAVA
+ elif endswith(f,".tar") then
+  untar(srcdir+'/'+f,workdir)
+  returned:=findmain(workdir,totest)
+ elif endswith(f,".tgz") or endswith(f,".tar.gz")then
+  untar("zlib.gzip:"+srcdir+'/'+f,workdir)
+  returned:=findmain(workdir,totest)
+ elif endswith(f,".zip") then
+  unzip(srcdir+'/'+f,workdir)
+  returned:=findmain(workdir,totest)
+ elif endswith(f,".dir") then
+  copydir(srcdir+'/'+f,workdir)
+  returned:=findmain(workdir,totest)
+ elif endswith(f,".mcf") then
+  fcopy(srcdir+'/'+f,workdir)
+  totest:=pathsplit(SYS_FNAME,f,testdir)
+  returned:=TFT_BIM
+ else
+  totest:=''
+  returned:=TFT_UNKNOWN
+  tres.status:=TST_ERROR
+  tres.msg:="Unexpected file extention"
+ end-if
+
+ if returned>=0 then
+  if totest.size>0 then
+   gettags(workdir+DIRSEP+totest,tres.opts)
+   if returned=TFT_BIM then
+    totest:=findmodel(workdir,tres.opts("model"))
+   end-if
+  end-if
+
+  if totest.size<1 then
+   tres.status:=TST_ERROR
+   tres.msg:="Main file was not found"
+   returned:=TFT_UNKNOWN
+  end-if
+ elif tres.status<>TST_ERROR then
+  tres.status:=TST_ERROR
+  tres.msg:="Main file was not found"
+ end-if
+ tres.filetype:=returned
+end-function
 
 !******************
 !* Process a test
 !******************
-function processtest(f:text,ft:integer,opts:array(string) of text,tres:s_tres,testdir:text):boolean
+procedure begintest(f:string,wid:integer,tres:s_test)
  declarations
-  specenv:set of string
-  rtmsg:text
   datadir:text
+  totest:text
+  ft:integer
+  testdir:text
+  prevstat:integer
  end-declarations
 
- tres.status:=TST_SUCCESS
- if opts("restore")<>"" then
-  forall(fc in splitlist(opts("restore"),10)) do
-   fcopy(DATADIR+'/'+fc,WKDIR)
-   if getsysstat<>0 then
-     tres.msg:="Failed to restore file '"+fc+"'"
+ prevstat:=if(tres.after<>'',tests(tres.after).status,TST_SUCCESS)
+ ! predecessor has not completed yet: this test will be delayed
+ if prevstat<TST_SUCCESS then
+  tres.status:=TST_DELAYED
+ else
+  tres.wid:=wid
+  ft:=preparetest(f,tres,totest,testdir)
+  if ft>=0 and tres.opts("after")<>"" then
+   if tres.opts("sync")="true" then
      tres.status:=TST_ERROR
-     break
+     tres.msg:="Tags 'after' and 'sync' cannot be combined"
+     ft:=TFT_UNKNOWN
+   else
+    ! normalise path to the file (relative to current location)
+    tafter:=expandpath(srcdir+'/'+pathsplit(SYS_DIR,f)+'/'+tres.opts("after"))
+    deltext(tafter,1,env_srcdir.size+1)
+    tres.after:=string(tafter)
+    if tres.after not in testfiles then
+     tres.status:=TST_ERROR
+     tres.msg:="Invalid 'after' tag (no test '"+tres.opts("after")+"')"
+     ft:=TFT_UNKNOWN
+    elif tests(tres.after).num>tres.num then
+     tres.status:=TST_ERROR
+     tres.msg:="Invalid sequence for 'after' tag '"+tres.opts("after")+"'"
+     ft:=TFT_UNKNOWN
+    else
+     prevstat:=tests(tres.after).status
+     if prevstat<TST_SUCCESS then
+      ! test requires another test that has not completed yet: delay it
+      tres.wid:=-1
+      tres.status:=TST_DELAYED
+      ft:=TFT_UNKNOWN   ! to skip startup and exit routine
+     end-if
+    end-if
    end-if
-  end-do
- end-if
-
- if tres.status=TST_SUCCESS then
-  if testdir<>'.' then
-   datadir:=srcdir+'/'+testdir
-  else
-   datadir:=srcdir
   end-if
-  if opts("copy")<>"" then
-   forall(fc in splitlist(opts("copy"),44)) do
-    fcopy(datadir+'/'+fc,WKDIR)
-    if getsysstat<>0 then
-      tres.msg:="Failed to copy file '"+fc+"'"
+
+  if tres.status<>TST_DELAYED : logbeforetest(tres)
+
+  if ft>=0 and (prevstat=TST_ERROR or prevstat=TST_FAILED) then
+   tres.msg:="Predecessor '"+tres.after+"' failed"
+   tres.status:=TST_ERROR
+  elif ft>=0 and not toskip(prevstat,tres) then
+   with opts=tres.opts, wkr=workers(tres.wid) do
+    tres.status:=TST_SUCCESS
+    if opts("restore")<>"" then
+     forall(fc in splitlist(opts("restore"),10)) do
+      fcopy(DATADIR+'/'+fc,wkr.workdir)
+      if getsysstat<>0 then
+        tres.msg:="Failed to restore file '"+fc+"'"
+        tres.status:=TST_ERROR
+        break
+      end-if
+     end-do
+    end-if
+
+    if tres.status=TST_SUCCESS then
+     if testdir<>'.' then
+      datadir:=srcdir+'/'+testdir
+     else
+      datadir:=srcdir
+     end-if
+     if opts("copy")<>"" then
+      forall(fc in splitlist(opts("copy"),44)) do
+       fcopy(datadir+'/'+fc,wkr.workdir)
+       if getsysstat<>0 then
+         tres.msg:="Failed to copy file '"+fc+"'"
+         tres.status:=TST_ERROR
+         break
+       end-if
+      end-do
+     end-if
+    end-if
+
+    if tres.status=TST_SUCCESS then
+     attachworker(f,tres)
+
+     rbf:=execmos(wkr,opts("runbefore"),"")
+     if rbf=2 then
+      tres.msg:="because of \"runbefore\""
+      tres.status:=TST_SKIPPED
+     elif rbf<>0 then
+      tres.msg:="Failed to run the 'runbefore' model"
       tres.status:=TST_ERROR
-      break
+     elif dobuild(wkr,opts("build")) then
+       tres.msg:="Failed to process the build list ("+opts("build")+")"
+       tres.status:=TST_ERROR
+     else
+      if ft=TFT_MOS then					! Mosel file
+       bimfile:=(totest-".mos")+".bim"
+       c:=safecompile(wkr,if(coverage,"G","g"),totest,bimfile)
+       expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
+       if c<>expstat then
+        tres.msg:="Compilation failed"
+        tres.status:=TST_FAILED
+       elif c=0 then
+        if opts("componly")<>"true" and opts("package")="" then
+         if(safeload(wkr,bimfile)) then
+          tres.msg:="Failed to load bimfile"
+          tres.status:=TST_ERROR
+         else
+          if coverage : setcontrol(wkr.mdr,"runmode","2")
+          tres.status:=TST_RUNNING
+          run(wkr.mdr,mergeparms(TESTPARAMS,opts("parms")))
+         end-if
+        elif opts("package")<>"" then
+         if not endswith(opts("package"),".bim"): opts("package")+=".bim"
+         fcopy(wkr.workdir+"/"+bimfile,DSODIR+"/"+opts("package"))
+         if getsysstat<>0 then
+           tres.msg:="Failed to save package '"+bimfile+"'"
+           tres.status:=TST_ERROR
+         end-if
+        end-if
+       end-if
+      elif ft=TFT_BIM then					! Bim file
+       if(safeload(wkr,totest)) then
+        tres.msg:="Failed to load bimfile"
+        tres.status:=TST_ERROR
+       else
+        if coverage: setcontrol(wkr.mdr,"runmode","2")
+        tres.status:=TST_RUNNING
+        run(wkr.mdr,mergeparms(TESTPARAMS,opts("parms")))
+       end-if
+      elif ft=TFT_C then				! C file
+       if opts("module")<>"" then
+        execfile:=(totest-".c")+".dso"
+        if domake(wkr,execfile) then
+         tres.msg:="Compilation failed"
+         tres.status:=TST_ERROR
+        else
+         fcopy(wkr.workdir+"/"+execfile,DSODIR+"/"+opts("module"))
+         if getsysstat<>0 then
+           tres.msg:="Failed to save module '"+execfile+"'"
+           tres.status:=TST_ERROR
+         end-if
+        end-if
+       else
+        execfile:=(totest-".c")+if(sysname="windows",".exe","")
+        if domake(wkr,execfile) then
+         tres.msg:="Compilation failed"
+         tres.status:=TST_ERROR
+        elif dorun(tres,execfile) then
+         tres.msg:="Execution error"
+         tres.status:=TST_FAILED
+        end-if
+       end-if
+      elif ft=TFT_JAVA then				! Java file
+       execfile:=(totest-".java")+".class"
+       if domake(wkr,execfile) then
+        tres.msg:="Compilation failed"
+        tres.status:=TST_ERROR
+       elif dorun(tres,execfile) then
+        tres.msg:="Execution error"
+        tres.status:=TST_FAILED
+       end-if
+      else
+       tres.msg:="Unknown file format"
+       tres.status:=TST_ERROR
+      end-if
+     end-if
     end-if
    end-do
   end-if
  end-if
+end-procedure
 
- if tres.status=TST_SUCCESS then
-  updenv(opts("setenv"),specenv)
-  if opts("newinst")="true" and specenv.size<1 : endinstance(true)
-  startinstance
+!****************************************
+!* Process test result after execution
+!****************************************
+procedure endtest(tres:s_test)
+ declarations
+  rtmsg:text
+ end-declarations
+ with opts=tres.opts, wkr=workers(tres.wid) do
+  expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
+  expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
 
-  rbf:=execmos(opts("runbefore"),"")
-  if rbf=2 then
-   tres.msg:="because of \"runbefore\""
-   tres.status:=TST_SKIPPED
-  elif rbf<>0 then
-   tres.msg:="Failed to run the 'runbefore' model"
-   tres.status:=TST_ERROR
-  elif dobuild(opts("build")) then
-    tres.msg:="Failed to process the build list ("+opts("build")+")"
-    tres.status:=TST_ERROR
-  else
-   tstart:=gettime
-   if ft=0 then					! Mosel file
-    bimfile:=string(copytext(f,1,f.size-4)+".bim")
-    c:=safecompile(if(coverage,"G","g"),string(f),bimfile)
-    expstat:=if(opts("compstat")<>"",parseint(opts("compstat"),1),0)
-    if c<>expstat then
-     tres.msg:="Compilation failed"
-     tres.status:=TST_FAILED
-    elif c=0 then
-     if opts("componly")<>"true" and opts("package")="" then
-      if(safeload(mdr,bimfile)) then
-       tres.msg:="Failed to load bimfile"
-       tres.status:=TST_ERROR
-      else
-       if coverage : setcontrol(mdr,"runmode","2")
-       run_mdr(mergeparms(TESTPARAMS,opts("parms")),tres)
-       if tres.status=TST_SUCCESS then
-        expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
-        expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
-        if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
-         tres.msg:="Execution error"
-         tres.status:=TST_FAILED
-        elif coverage then
-         savecovres(srcfiles)
-        end-if
-       ! else timeout
-       end-if
-       setparam("ioctrl",true)
-        unload(mdr)
-        asproc(getparam("iostatus"))
-       setparam("ioctrl",false)
-      end-if
-     elif opts("package")<>"" then
-      if not endswith(opts("package"),".bim"): opts("package")+=".bim"
-      fcopy(WKDIR+"/"+bimfile,DSODIR+"/"+opts("package"))
-      if getsysstat<>0 then
-        tres.msg:="Failed to save package '"+bimfile+"'"
-        tres.status:=TST_ERROR
-      end-if
-     end-if
-    end-if
-   elif ft=3 then					! Bim file
-    bimfile:=string(f)
-    if(safeload(mdr,bimfile)) then
-     tres.msg:="Failed to load bimfile"
-     tres.status:=TST_ERROR
-    else
-     if coverage: setcontrol(mdr,"runmode","2")
-     run_mdr(mergeparms(TESTPARAMS,opts("parms")),tres)
-     if tres.status=TST_SUCCESS then
-      expstat:=if(opts("runstat")<>"",parseint(opts("runstat"),1),0)
-      expexcde:=if(opts("exitcode")<>"",parseint(opts("exitcode"),1),0)
-      if minst.status<>0 or mdr.status<>expstat or mdr.exitcode<>expexcde then
-       tres.msg:="Execution error"
-       tres.status:=TST_FAILED
-      elif coverage then
-       savecovres(srcfiles)
-      end-if
-     ! else timeout
-     end-if
-     setparam("ioctrl",true)
-      unload(mdr)
-      asproc(getparam("iostatus"))
-     setparam("ioctrl",false)
-    end-if
-   elif ft=1 then				! C file
-    if opts("module")<>"" then
-     execfile:=string(copytext(f,1,f.size-2)+".dso")
-     if domake(execfile) then
-      tres.msg:="Compilation failed"
-      tres.status:=TST_ERROR
-     else
-      fcopy(WKDIR+"/"+execfile,DSODIR+"/"+opts("module"))
-      if getsysstat<>0 then
-        tres.msg:="Failed to save module '"+execfile+"'"
-        tres.status:=TST_ERROR
-      end-if
-     end-if
-    else
-     execfile:=string(copytext(f,1,f.size-2)+if(sysname="windows",".exe",""))
-     if domake(execfile) then
-      tres.msg:="Compilation failed"
-      tres.status:=TST_ERROR
-     elif dorun(execfile) then
-      tres.msg:="Execution error"
-      tres.status:=TST_FAILED
-     end-if
-    end-if
-   elif ft=2 then				! Java file
-    execfile:=string(copytext(f,1,f.size-5)+".class")
-    if domake(execfile) then
-     tres.msg:="Compilation failed"
-     tres.status:=TST_ERROR
-    elif dorun(execfile) then
-     tres.msg:="Execution error"
-     tres.status:=TST_FAILED
-    end-if
-   else
-    tres.msg:="Unknown file format"
-    tres.status:=TST_ERROR
-   end-if
-
-   tres.time:=gettime-tstart
-
-   if minst.status<>0 then
+  if wkr.tnum=tres.num then
+   tres.time+=gettime
+   if tres.status=TST_TIMEOUT then
+    tres.msg:=formattext("Timeout (%ds)",MAXWAIT)
+    tres.status:=TST_FAILED
+   elif wkr.minst.status<>0 then
     tres.msg:="Mosel crashed"
-    if tres.status=TST_SUCCESS: tres.status:=TST_ERROR
+    tres.status:=TST_ERROR
+   elif tres.status=TST_RUNNING and (wkr.mdr.status<>expstat or wkr.mdr.exitcode<>expexcde) then
+    tres.msg:="Execution error"
+    tres.status:=TST_FAILED
+   else
+    if tres.status=TST_RUNNING: tres.status:=TST_SUCCESS
+    if coverage and (tres.filetype=TFT_MOS or tres.filetype=TFT_BIM) then
+     savecovres(wkr,srcfiles)
+    end-if
+  
+    if execmos(wkr,opts("runafter"),"")<>0 then
+     tres.msg:="Failed to run the 'runafter' model"
+     tres.status:=TST_ERROR
+    end-if
    end-if
-
-   if tres.status=TST_SUCCESS and execmos(opts("runafter"),"")<>0 then
-    tres.msg:="Failed to run the 'runafter' model"
+   detachworker(tres)
+   if tres.status<=TST_SKIPPED and wkr.minst.status=-3 then
+    tres.msg:="Abnormal instance termination"
     tres.status:=TST_ERROR
    end-if
-
-   if tres.status=TST_SUCCESS and opts("save")<>"" then
-    forall(fc in splitlist(opts("save"),10)) do
-     fcopy(WKDIR+"/"+fc,DATADIR)
-     if getsysstat<>0 then
-      tres.msg:="Failed to save '"+fc+"'"
-      tres.status:=TST_ERROR
-      break
-     end-if
-    end-do
-   end-if
-
-   if tres.status=TST_SUCCESS and findpattern(opts("outexpect"),WKDIR+"/"+OUT,rtmsg) then
-    tres.msg:=text("Failed to validate 'outexpect' (")+rtmsg+")"
-    tres.status:=TST_FAILED
-   end-if
-   if tres.status=TST_SUCCESS and findpattern(opts("errexpect"),WKDIR+"/"+ERR,rtmsg) then
-    tres.msg:=text("Failed to validate 'errexpect' (")+rtmsg+")"
-    tres.status:=TST_FAILED
-   end-if
-   if tres.status=TST_SUCCESS and opts("noerrmsg")="true" and getfsize(WKDIR+"/"+ERR)>0 then
-    tres.msg:="Error messages have been displayed"
-    tres.status:=TST_FAILED
-   end-if
+  end-if
+  
+  if tres.status=TST_SUCCESS and opts("save")<>"" then
+   forall(fc in splitlist(opts("save"),10)) do
+    fcopy(wkr.workdir+"/"+fc,DATADIR)
+    if getsysstat<>0 then
+     tres.msg:="Failed to save '"+fc+"'"
+     tres.status:=TST_ERROR
+     break
+    end-if
+   end-do
   end-if
 
-  if specenv.size>0 then
-   forall(s in specenv)
-    setenv(s,"")
-   defsetenv             ! Restore defaults
-   endinstance(true)
-  else
-   endinstance(opts("restart")="true")
+  if tres.status=TST_SUCCESS and findpattern(opts("outexpect"),outlog(tres),rtmsg) then
+   tres.msg:=text("Failed to validate 'outexpect' (")+rtmsg+")"
+   tres.status:=TST_FAILED
+  end-if
+  if tres.status=TST_SUCCESS and findpattern(opts("errexpect"),errlog(tres),rtmsg) then
+   tres.msg:=text("Failed to validate 'errexpect' (")+rtmsg+")"
+   tres.status:=TST_FAILED
+  end-if
+  if tres.status=TST_SUCCESS and opts("noerrmsg")="true" and isnonempty(errlog(tres)) then
+   tres.msg:="Error messages have been displayed"
+   tres.status:=TST_FAILED
   end-if
 
-  if tres.status<=TST_SKIPPED and minst.status=-3 then
-   tres.msg:="Abnormal instance termination"
-   tres.status:=TST_ERROR
-  end-if
- end-if
- returned:=tres.status>TST_SKIPPED
-end-function
+ end-do
+end-procedure
 
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 !****************************************
 !* Prepare the Mosel instance for a run
 !****************************************
-procedure startinstance
- if minst.status<>0 then
-  valgrind:=if(VALGRIND,'valgrind --num-callers=20 ','')
-  if connect(minst,'rcmd:'+valgrind+'mosel -r -d "'+expandpath(WKDIR)+
-                                   '" -dp "'+env_dsopath+'"')<>0  then
-   fatalerror(2,"failed to start Mosel instance")
+procedure attachworker(f:string,tres:s_test)
+ declarations
+  spe:set of string
+ end-declarations
+
+ with wkr=workers(tres.wid) do
+  assert(wkr.tnum<0)
+
+  ! update environment for next run
+  updenv(tres.opts("setenv"),spe)
+  if wkr.minst.status=0 and (tres.opts("newinst")="true" or spe.size>0) : disconnect(wkr.minst)
+
+  if wkr.minst.status<>0 then
+   valgrind:=if(VALGRIND,'valgrind --num-callers=20 ','')
+   ! Add instance working directory to dso path
+   dsopath:=expandpath(wkr.workdir)+PATHSEP+getenv("MOSEL_DSO")
+   setenv("MOSEL_DSO",dsopath)
+   if connect(wkr.minst,'rcmd:'+valgrind+'mosel -r -d "'+expandpath(wkr.workdir)+
+                                    '" -dp "'+dsopath+'"')<>0  then
+    fatalerror(2,"failed to start Mosel instance")
+   end-if
+   setenv("MOSEL_DSO",env_dsopath)
+   wkr.onceonly:=spe.size>0
+   wkr.nbtest:=0
   end-if
+  ! restore environment of current model
+  if spe.size>0 then
+   forall(s in spe)
+    setenv(s,"")
+   defsetenv             ! Restore defaults
+  end-if
+
+  ! restart on detach if resquested or dummy test (num=0)
+  if tres.opts("restart")="true" or tres.num=0 : wkr.onceonly:=true
+
+  setcontrol(wkr.minst,"lang","en")
+  outpath:=string(expandpath(outlog(tres)))
+  errpath:=string(expandpath(errlog(tres)))
+  if SHOWLOGS and RFMT="" and NBW<=1 then
+   outpath:="tee:"+outpath+"&rmt:sysfd:1"
+   errpath:="tee:"+errpath+"&rmt:sysfd:2"
+  end-if
+  setdefstream(wkr.minst,F_INPUT,"null:")
+  setdefstream(wkr.minst,F_OUTPUT+F_LINBUF,outpath)
+  setdefstream(wkr.minst,F_ERROR+F_LINBUF,errpath)
+  if getfstat(wkr.workdir+"/makefile")=0 then
+   fcopy("tmp:makefile",wkr.workdir+"/makefile")
+  end-if
+
+  wkr.tnum:=tres.num
+  wkr.file:=f
+  wkr.nbtest+=1
+  tres.wnbt:=wkr.nbtest
+ end-do
+ tres.time:=-gettime
+ if MAXWAIT>0 and settimer(tres.wid,MAXWAIT*1000,false)<>tres.wid then
+  fatalerror(2,"failed to set timer")
  end-if
- setcontrol(minst,"lang","en")
- outpath:=string(expandpath(text(WKDIR)+"/"+OUT))
- errpath:=string(expandpath(text(WKDIR)+"/"+ERR))
- if SHOWLOGS and RFMT="" then
-  outpath:="tee:"+outpath+"&rmt:sysfd:1"
-  errpath:="tee:"+errpath+"&rmt:sysfd:2"
- end-if
- setdefstream(minst,F_INPUT,"null:")
- setdefstream(minst,F_OUTPUT+F_LINBUF,outpath)
- setdefstream(minst,F_ERROR+F_LINBUF,errpath)
- fcopy("tmp:makefile",WKDIR+"/makefile")
+ freewks-={tres.wid}
 end-procedure
 
 !**************************************
 !* Clean up Mosel instance after a run
 !**************************************
-procedure endinstance(discon:boolean)
- unload(mdr)
- if discon or minst.status<>0 then
-  disconnect(minst)
- else
-  setparam("ioctrl",true)
-   setdefstream(minst,"null:","","")
-   iost:=getparam("iostatus")
-  setparam("ioctrl",false)
-  if iost<>0 then  ! instance crashed
-   disconnect(minst)
-  end-if
+procedure detachworker(tres:s_test)
+ declarations
+  lsf:list of text
+ end-declarations
+
+ if tres.time<0 then
+  tres.time+=gettime
  end-if
+ canceltimer(tres.wid)
+
+ with wkr=workers(tres.wid) do
+  wkr.tnum:=-1
+  wkr.file:=""
+  freewks+={tres.wid}
+  if wkr.minst.status<>0 or wkr.onceonly then
+   disconnect(wkr.minst)
+  else
+   setparam("ioctrl",true)
+    unload(wkr.mdr)
+    iost:=getparam("iostatus")
+    if iost=0 then
+     setdefstream(wkr.minst,"null:","","")
+     iost:=getparam("iostatus")
+    end-if
+   setparam("ioctrl",false)
+   if iost<>0 then  ! instance crashed
+    disconnect(wkr.minst)
+   else
+    ! If we have built modules, unload them before cleanup
+    findfiles(SYS_NODIR+SYS_NOSORT,lsf,wkr.workdir,"*.dso")
+    if lsf.size>0: setcontrol(wkr.minst,"flushdso","")
+   end-if
+  end-if
+ end-do
 end-procedure
 
 !***********************************
@@ -683,44 +1053,67 @@ function mergeparms(p1:text,p2:text):text
  end-if
 end-function
 
-!***********************************
-!* Run the model mdr on minst
-!***********************************
-procedure run_mdr(parms:text,tres:s_tres)
- run(mdr,parms)
- waitfor(EVENT_END,MAXWAIT,WAIT_EXACT)
- if waitexpired then
-  tres.msg:=formattext("Timeout (%ds)",MAXWAIT)
-  tres.status:=TST_FAILED
-  stop(mdr)
-  waitfor(EVENT_END,20,WAIT_EXACT)
-  if waitexpired then
-   kill(minst)
-   waitfor(EVENT_END,-1,WAIT_EXACT)
+!********************************************
+!* Run an executable on the remote instance
+!********************************************
+function dorun(tres:s_test,f:text):boolean
+ fopen("tmp:dorun.mos",F_OUTPUT)
+ writeln(`DOMAKE
+model domake
+uses 'mmsystem'
+parameters
+ TODO=""
+end-parameters
+system(TODO)
+exit(getsysstat)
+end-model
+DOMAKE`)
+ fclose(F_OUTPUT)
+ if endswith(f,".class") then
+  if sysname="windows" then
+   todo:=text('java -enableassertions ')+(f-".class")
+  else
+   todo:=text('java -d')+sysarch+" -enableassertions "+(f-".class")
   end-if
+ else
+  todo:='.'+DIRSEP+f
  end-if
- dropnextevent
-end-procedure
+
+ with wkr=workers(tres.wid) do
+  if safecompile(wkr,"g","rmt:tmp:dorun.mos","tmp:bimfile")<>0 or
+     safeload(wkr,"tmp:bimfile") then
+   returned:=true
+  else
+   run(workers(tres.wid).mdr,text("TODO='")+todo+"'")
+   tres.status:=TST_RUNNING
+  end-if
+ end-do
+end-function
 
 !***********************************
 !* Execute a model on the instance
 !***********************************
-function execmos(torun:text,parms:text):integer
- declarations
-  tres:s_tres
- end-declarations
+function execmos(wkr:s_worker,torun:text,parms:text):integer
  if torun<>"" then
-  if safecompile("g",string(torun),"tmp:bimfile")<>0 or
-     safeload(mdr,"tmp:bimfile") then
+  if safecompile(wkr,"g",torun,"tmp:bimfile")<>0 or
+     safeload(wkr,"tmp:bimfile") then
    returned:=-1
   else
-   run_mdr(parms,tres)
-   if mdr.status<>0 then
+   run(wkr.mdr,parms)
+   waitforend(wkr.mdr,3*60)   ! no more than 3min here
+   if waitexpired then
+    stop(wkr.mdr)
+    waitforend(wkr.mdr,20)    ! additional 20s to cleanup
+    if waitexpired then       ! something went wrong: kill instance
+     kill(wkr.minst)
+     waitforend(wkr.mdr)
+    end-if
+    returned:=-2
+   elif wkr.mdr.status<>0 then
     returned:=-2
    else
-    returned:=mdr.exitcode
+    returned:=wkr.mdr.exitcode
    end-if
-   unload(mdr)
   end-if
  end-if
 end-function
@@ -728,7 +1121,7 @@ end-function
 !********************************************
 !* Build what has to be built before the run
 !********************************************
-function dobuild(tobuild:text):boolean
+function dobuild(wkr:s_worker,tobuild:text):boolean
  declarations
   lsb:list of text
  end-declarations
@@ -737,12 +1130,11 @@ function dobuild(tobuild:text):boolean
   lsb:=splitlist(tobuild)
   forall(td in lsb) do
    if endswith(td,".bim") then
-    if safecompile("g",string(copytext(td,1,td.size-4)+".mos"),
-                                                string(td))<>0 then
+    if safecompile(wkr,"g",(td-".bim")+".mos",td)<>0 then
      returned:=true
      break
     end-if
-   elif domake(td) then
+   elif domake(wkr,td) then
     returned:=true
     break
    end-if
@@ -753,7 +1145,7 @@ end-function
 !***************************
 !* Get all files to be run
 !***************************
-function gettotest(path:text,incl:text,excl:text):list of text
+function gettotest(path:text,incl:text,excl:text):list of string
  declarations
   f:text
   lsf:list of text
@@ -769,18 +1161,18 @@ function gettotest(path:text,incl:text,excl:text):list of text
 
  if filexists(path) then
   f:=pathsplit(SYS_FNAME,path,path)
-  returned:=[f]
+  returned:=[string(f)]
  elif endswith(path,".dir") and bittest(getfstat(path), SYS_TYP)=SYS_DIR then
   f:=pathsplit(SYS_FNAME,path,path)
-  returned:=[f]
+  returned:=[string(f)]
  else
   findfiles(SYS_RECURS+SYS_NODIR,lsf,path,"*.mos|*.c|*.java|*.zip|*.tar|*.tgz|*.tar.gz|*.mcf")
   forall(l in lsf| (or(ff in tincl) pathmatch(l,ff)) and not (or(ff in texcl) pathmatch(l,ff)))
-    returned+=[l]
+    returned+=[string(l)]
   lsf:=[]
   findfiles(SYS_RECURS+SYS_DIRONLY,lsf,path,"*.dir")
   forall(l in lsf| (or(ff in tincl) pathmatch(l,ff)) and not (or(ff in texcl) pathmatch(l,ff)))
-    returned+=[l]
+    returned+=[string(l)]
   qsort(SYS_UP,returned)
  end-if
 end-function
@@ -834,35 +1226,9 @@ end-function
 !* Clear a directory
 !*********************
 procedure cleardir(p:text,rmd:boolean)
- cleardir(p,rmd,false)
-end-procedure
-
-procedure cleardir(p:text,rmd:boolean,keeperr:boolean)
  declarations
   lsf:list of text
  end-declarations
-
- if rmd: keeperr:=false
-
- if minst.status=0 then
-  ! If we have built modules, unload them before cleanup
-  findfiles(SYS_NODIR+SYS_NOSORT,lsf,p,"*.dso")
-  if lsf.size>0 then
-   ! 'flushdso' available in Mosel 3.13.1 and newer
-   setparam("ioctrl",true)
-    setcontrol(minst,"flushdso","")
-    asproc(getparam("iostatus"))
-   setparam("ioctrl",false)
-  end-if
-
-  ! When the instance is running we must keep the error file
-  ! otherwise we loose output of the instance (not an issue for the models)
-  ! => move it outside of the directory we are clearing
-  if keeperr and p=WKDIR and filexists(WKDIR+"/"+ERR) then
-   fcopy("null:",WKDIR+"/"+ERR)
-   fmove(WKDIR+"/"+ERR,WKDIR+"/../.savederr")
-  end-if
- end-if
 
  ! Firstly remove files only
  removefiles(SYS_RECURS+SYS_NODIR,p,"*")
@@ -888,12 +1254,7 @@ procedure cleardir(p:text,rmd:boolean,keeperr:boolean)
   removefiles(SYS_RECURS,p,"*")
  end-if
 
- if rmd then
-  removedir(p)
- elif filexists(WKDIR+"/../.savederr") then
-  ! restore error file
-  fmove(WKDIR+"/../.savederr",WKDIR+"/"+ERR)
- end-if
+ if rmd: removedir(p)
 end-procedure
 
 !*************************
@@ -917,13 +1278,13 @@ end-procedure
 !**************************************
 !* Find the "main" file in a directory
 !**************************************
-function findmain(wkdir:text,totest:text):integer
+function findmain(wkdir:string,totest:text):integer
  declarations
   lsf:list of text
  end-declarations
 
  totest:=""
- returned:=-1
+ returned:=TFT_UNKNOWN
 
  findfiles(SYS_NODIR,lsf,wkdir,"main.mos|main.c|Main.java|main.java|main.mcf")
  if lsf.size<>1 then
@@ -988,16 +1349,16 @@ function expandapp(wkdir:text,path:text):text
 end-function
 
 !***********************************
-!* Process options of a source file
+!* Process tags of a source file
 !***********************************
-procedure getopts(f:text,opts:array(set of string) of text)
+procedure gettags(f:text,opts:array(set of string) of text)
  declarations
   line,val:text
   parm:string
  end-declarations
 
  delcell(opts)
- fopen(WKDIR+"/"+f,F_INPUT)
+ fopen(f,F_INPUT)
  while(readtextline(line)>=0) do
   trim(line)
   if startswith(line,CONFLINE) then
@@ -1016,8 +1377,8 @@ procedure getopts(f:text,opts:array(set of string) of text)
      opts(parm):=val
     end-if
    else
-    logmsg(MSL_WAR,"   Warning: option `",if(parm.size>0,text(parm),line),
-            "' ignored (file ",f,")")
+    logmsg(MSL_WAR,"   Warning: tag `",if(parm.size>0,text(parm),line),
+            "' ignored (file ",pathsplit(SYS_FNAME,f),")")
    end-if
   end-if
  end-do
@@ -1028,10 +1389,12 @@ end-procedure
 !* Set default environment variables
 !************************************
 procedure defsetenv
+ setenv("SRCDIR",env_srcdir)
  setenv("DSODIR",env_dsodir)
  setenv("DATADIR",env_datadir)
  setenv("MOSEL_DSO",env_dsopath)   ! For submodels created by worker
  setenv("MOSEL_BIM",env_bimpfx)    ! For submodels created by worker
+ setenv("MOSEL_TMP",env_tmpdir)
  setenv("CLASSPATH",env_clspath)
 end-procedure
 
@@ -1054,7 +1417,7 @@ procedure updenv(env:text,spe:set of string)
      deltext(esys,esys.size-1,esys.size)
     end-if
     if string(esys) not in KNOWNSYSNAMES then
-     logmsg(MSL_WAR,"Warning: option `setenv ",e,"' ignored (unknown system name)")
+     logmsg(MSL_WAR,"Warning: tag `setenv ",e,"' ignored (unknown system name)")
     end-if
     next
    else
@@ -1065,17 +1428,12 @@ procedure updenv(env:text,spe:set of string)
    ename:=copytext(e,mp(1))
    eval:=copytext(e,mp(2))
   else
-   logmsg(MSL_WAR,"Warning: option `setenv ",e,"' ignored (syntax error)")
+   logmsg(MSL_WAR,"Warning: tag `setenv ",e,"' ignored (syntax error)")
    next
   end-if
   spe+={string(ename)}
   setenv(ename,expenv(eval))
  end-do
-
- ! If new variables have been defined, restart Mosel instance
- if spe.size>0 then
-  endinstance(true)
- end-if
 end-procedure
 
 !***************************************
@@ -1096,78 +1454,121 @@ function expenv(ev:text):text
  end-do
 end-function
 
+!********************************
+!* Check whether a file is emty
+!********************************
+function isnonempty(f:string):boolean
+ returned:=filexists(f) and getfsize(f)>0
+end-function
+
 !*****************************************************
 !* Make sure a path uses '/' for directory separation
 !*****************************************************
-function mkuxpath(p:text):text
+function mkuxpath(p:string):text
  returned:=p
  asproc(regreplace(returned,'\\','/'))
+end-function
+
+!*********************************
+!* Generate a label from a path
+!*********************************
+function mklabpath(p:string):text
+ returned:=mkuxpath(p)
+ asproc(regreplace(returned,'\.\./',''))
+end-function
+
+!**************************************
+!* Generate the output file of a test
+!**************************************
+function outlog(tres:s_test):string
+ returned:=OUTDIR+DIRSEP+"out_"+tres.num+".txt"
+end-function
+
+!**************************************
+!* Generate the error file of a test
+!**************************************
+function errlog(tres:s_test):string
+ returned:=OUTDIR+DIRSEP+"err_"+tres.num+".txt"
 end-function
 
 !*****************************************
 !* Check whether a test should be skipped
 !*****************************************
-function toskip(opts:array(set of string) of text,tres:s_tres):boolean
+function toskip(prevstat:integer,tres:s_test):boolean
  declarations
   mp:array(0..3) of textarea
  end-declarations
 
- if opts("skip")="true" then
-  tres.msg:="disabled"
- else
-  if opts("skip_host")<>"" then
-   lsn:=splitset(opts("skip_host"))
-   if syshost in lsn then
-    tres.msg:="on this host"
+ with opts=tres.opts do
+  if labels_skip.size>0 or labels_only.size<>0 then
+   labels:=splitset(opts("labels"))
+   if getsize(labels*labels_skip)>0 then
+    tres.msg:="excluded by label"
+    break
+   elif labels_only.size>0 and getsize(labels*labels_only)=0 then
+    tres.msg:="missing label"
+    break
    end-if
   end-if
-  if not returned and opts("skip_sys")<>"" then
-   lsn:=splitset(opts("skip_sys"))
-   if sysname in lsn or sysnaarch in lsn or 
-      sysproc in lsn or sysnaproc in lsn then
-    tres.msg:="on this system"
-   end-if
-  end-if
-  if not returned and opts("only_host")<>"" then
-   lsn:=splitset(opts("only_host"))
-   if syshost not in lsn then
-    tres.msg:="on this host"
-   end-if
-  end-if
-  if not returned and opts("only_sys")<>"" then
-   lsn:=splitset(opts("only_sys"))
-   if sysname not in lsn and sysnaarch not in lsn and
-      sysproc not in lsn and sysnaproc not in lsn  then
-    tres.msg:="on this system"
-   end-if
-  end-if
-  if not returned and opts("required")<>"" then
-   forall(p in splittext(opts("required"),","))
-    if regmatch(p,' *\([-_.a-zA-Z0-9]*\) *\([<>]\) *\([0-9][0-9.]*\)',1,0,mp) then
-     m:=string(copytext(p,mp(1)))
-     mv:=copytext(p,mp(3))
-     d:=copytext(p,mp(2))
-     v:=getpmvers(m)
-     if v<0 then
-      tres.msg:=text("missing '")+m+"'"
-     else
-      reset(mp)
-      if regmatch(mv,'\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
-       mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000+parseint(mv,mp(3))
-      elif regmatch(mv,'\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
-       mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000
-      else
-       mvn:=parseint(mv,1)*1000000
-      end-if
-      if (d=">" and v<mvn) or (d="<" and v>mvn) then
-       tres.msg:="incompatible version of '"+m+"' ("+pmvers_txt(m)+d+mv+")"
-      end-if
-     end-if
-    else
-     tres.msg:="Malformed 'required' tag '"+p+"' - test ignored"
+  if prevstat=TST_SKIPPED then
+   tres.msg:="because of predecessor"
+  elif opts("skip")="true" then
+   tres.msg:="disabled"
+  else
+   if opts("skip_host")<>"" then
+    lsn:=splitset(opts("skip_host"))
+    if syshost in lsn then
+     tres.msg:="on this host"
     end-if
+   end-if
+   if not returned and opts("skip_sys")<>"" then
+    lsn:=splitset(opts("skip_sys"))
+    if sysname in lsn or sysnaarch in lsn or 
+       sysproc in lsn or sysnaproc in lsn then
+     tres.msg:="on this system"
+    end-if
+   end-if
+   if not returned and opts("only_host")<>"" then
+    lsn:=splitset(opts("only_host"))
+    if syshost not in lsn then
+     tres.msg:="on this host"
+    end-if
+   end-if
+   if not returned and opts("only_sys")<>"" then
+    lsn:=splitset(opts("only_sys"))
+    if sysname not in lsn and sysnaarch not in lsn and
+       sysproc not in lsn and sysnaproc not in lsn  then
+     tres.msg:="on this system"
+    end-if
+   end-if
+   if not returned and opts("required")<>"" then
+    forall(p in splittext(opts("required"),","))
+     if regmatch(p,' *\([-_.a-zA-Z0-9]*\) *\([<>]\) *\([0-9][0-9.]*\)',1,0,mp) then
+      m:=string(copytext(p,mp(1)))
+      mv:=copytext(p,mp(3))
+      d:=copytext(p,mp(2))
+      v:=getpmvers(m)
+      if v<0 then
+       tres.msg:=text("missing '")+m+"'"
+      else
+       reset(mp)
+       if regmatch(mv,'\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
+        mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000+parseint(mv,mp(3))
+       elif regmatch(mv,'\([0-9]*\)\.\([0-9]*\)',1,0,mp) then
+        mvn:=parseint(mv,mp(1))*1000000+parseint(mv,mp(2))*1000
+       else
+        mvn:=parseint(mv,1)*1000000
+       end-if
+       if (d=">" and v<mvn) or (d="<" and v>mvn) then
+        tres.msg:="incompatible version of '"+m+"' ("+pmvers_txt(m)+d+mv+")"
+       end-if
+      end-if
+     else
+      tres.msg:="Malformed 'required' tag '"+p+"' - test ignored"
+     end-if
+   end-if
   end-if
- end-if
+ end-do
 
  if tres.msg.size>0 then
   tres.status:=TST_SKIPPED
@@ -1327,46 +1728,64 @@ end-function
 !******************
 !* Save log files
 !******************
-procedure savelogs(f:text)
+procedure savelogs(tres:s_test)
  declarations
-  lfname: text
+  lfname,ff: text
  end-declarations
+
+ outfile:=outlog(tres)
+ errfile:=errlog(tres)
+ ff:=tres.label
  if LOGDIR="" then
   if repfile<>'-' then
    fopen(repfile,F_OUTPUT+F_APPEND)
    writeln("+"*78)
-   writeln(if(f.size<77,"="*(77-f.size),text("=="))," ",f)
-   if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+   writeln(if(ff.size<77,"="*(77-ff.size),text("=="))," ",ff)
+   if isnonempty(outfile) then
     writeln("==== ","output"," ====")
    end-if
    fclose(F_OUTPUT)
-   fcopy(WKDIR+"/"+OUT,F_SILENT,repfile,F_APPEND)
-   if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+   fcopy(outfile,F_SILENT,repfile,F_APPEND)
+   if isnonempty(errfile) then
     fopen(repfile,F_OUTPUT+F_APPEND)
     writeln("==== ","error"," ====")
     fclose(F_OUTPUT)
-    fcopy(WKDIR+"/"+ERR,F_SILENT,repfile,F_APPEND)
+    fcopy(errfile,F_SILENT,repfile,F_APPEND)
    end-if
   end-if
  else
-  ff:=copytext(f,1,f.size)
   asproc(regreplace(ff,'([/:\\])',"_",1,REG_EXTENDED))
-  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
-    lfname:=OUT
+  if isnonempty(outfile) then
     if repdate<>"" then
-      asproc(pathsplit(SYS_EXTN,lfname,lfname))
-      lfname+=repdate+".txt"
+      lfname:="out"+repdate+".txt"
+    else
+      lfname:="out.txt"
     end-if
-    fcopy(WKDIR+"/"+OUT,LOGDIR+"/"+ff+"_"+lfname)
+    fcopy(outfile,LOGDIR+"/"+ff+"_"+lfname)
   end-if
-  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
-    lfname:=ERR
+  if isnonempty(errfile) then
     if repdate<>"" then
-      asproc(pathsplit(SYS_EXTN,lfname,lfname))
-      lfname+=repdate+".txt"
+      lfname:="err"+repdate+".txt"
+    else
+      lfname:="err.txt"
     end-if
-    fcopy(WKDIR+"/"+ERR,LOGDIR+"/"+ff+"_"+lfname)
+    fcopy(errfile,LOGDIR+"/"+ff+"_"+lfname)
   end-if
+ end-if
+end-procedure
+
+!******************
+!* Display log files
+!******************
+procedure showlogs(tres:s_test)
+ outfile:=outlog(tres)
+ errfile:=errlog(tres)
+ if isnonempty(outfile) then
+  fflush
+  fcopy(outfile,F_TEXT,"sysfd:1",F_APPEND)
+ end-if
+ if isnonempty(errfile) then
+  fcopy(errfile,F_TEXT,"sysfd:2",F_APPEND)
  end-if
 end-procedure
 
@@ -1388,7 +1807,7 @@ procedure setsysdep
    ! use nmake if it is available
    fopen("null:",F_OUTPUT)
    fopen("null:",F_ERROR)
-   system("nmake /nologo /?")
+   system("nmake -nologo -?")
    fclose(F_ERROR)
    fclose(F_OUTPUT)
    usenmake := getsysstat = 0
@@ -1413,15 +1832,15 @@ procedure setsysdep
  writeln(".SUFFIXES: .bim .mos .dso .java .class")
  if sysname="windows" then
   if sysarch=32 then
-   writeln('CFLAGS=/nologo /Zi /MD /I"$(XPRESSDIR)\include"')
+   writeln('CFLAGS=-nologo -Zi -MD -I"$(XPRESSDIR)\include"')
   else
-   writeln('CFLAGS=/nologo /Zi /MD /GS- /I"$(XPRESSDIR)\include"')
+   writeln('CFLAGS=-nologo -Zi -MD -GS- -I"$(XPRESSDIR)\include"')
   end-if
   writeln(`WIN32
 .c.exe:
-	$(CC) $(CFLAGS) $< /link /libpath:"$(XPRESSDIR)\lib" xprm_mc.lib xprm_rt.lib xprd.lib bindrvMD.lib
+	$(CC) $(CFLAGS) $< -link -libpath:"$(XPRESSDIR)\lib" xprm_mc.lib xprm_rt.lib xprd.lib bindrvMD.lib
 .c.dso:
-	$(CC) $(CFLAGS) /LD $< /Fe$*.dso
+	$(CC) $(CFLAGS) -LD $< -Fe$*.dso
 .mos.bim:
 	mosel compile -g $*.mos
 .java.class:
@@ -1505,18 +1924,18 @@ end-procedure
 !************************************
 !* Load a model on 'minst' "safely"
 !************************************
-function safeload(m:Model,bf:string):boolean
+function safeload(wkr:s_worker,bf:text):boolean
  localsetparam("ioctrl",true)
- load(minst,m,bf)
+ load(wkr.minst,wkr.mdr,bf)
  returned:= getparam("iostatus")<>0
 end-function
 
 !***************************************
 !* Compile a model on 'minst' "safely"
 !***************************************
-function safecompile(opts:string,src:string,dst:string):integer
+function safecompile(wkr:s_worker,opts:string,src:text,dst:text):integer
  localsetparam("ioctrl",true)
- returned:=compile(minst,opts,src,dst)
+ returned:=compile(wkr.minst,opts,src,dst)
  asproc(getparam("iostatus"))
 end-function
 
@@ -1535,14 +1954,32 @@ procedure startxsrv
   if c=0 then
    disconnect(inst)
    logmsg(MSL_WAR,"Warning: using an existing xprmsrv server - remote tests may fail")
+  elif system_log("xprmsrv",'-k',expandpath(WKDIR+"/xprmsrv.key"),'-key','new') then
+   fatalerror(2,"Failed to generate key file")
   else
-   fopen("tmp:xcfg",F_OUTPUT)
+   makedir(WKDIR+"/xprmsrv")
+   fopen(WKDIR+"/xprmsrv.conf",F_OUTPUT)
+   if XSRVLOG<>'' then
+    writeln("LOGFILE=",expandpath(XSRVLOG))
+    writeln("VERBOSITY=2")
+   end-if
    writeln("XPRMSRV_ACCESS=127.0.0.1 ",getsysinfo(SYS_NODE))
+   writeln("KEYFILE=",expandpath(WKDIR+"/xprmsrv.key"))
+   writeln("MAXAUTHTIME=5")
    writeln("[xpress]")
-   writeln("MOSEL_CWD=",expandpath(WKDIR))
+   if sysname="windows" then
+    writeln('MOSEL_CMD=${XPRESSDIR}\bin\mosel.exe -r -d tmp:')
+   else
+    writeln("MOSEL_CMD=${XPRESSDIR}/bin/mosel -r -d tmp:")
+   end-if
+   writeln("MOSEL_CWD=",expandpath(WKDIR+"/xprmsrv"))
+   writeln("MOSEL_TMP=",env_tmpdir)
    fclose(F_OUTPUT)
-   system("xprmsrv -tm 3600 -d -pf "+PIDFILE+" "+expandpath("tmp:xcfg"))
-   logmsg(MSL_INF,"xprmsrv server started")
+   if system_log("xprmsrv",'-tm','1200','-d','-pf',PIDFILE,expandpath(WKDIR+"/xprmsrv.conf")) then
+    fatalerror(2,"Failed to start xprmsrv server")
+   else
+    logmsg(MSL_INF,"xprmsrv server started")
+   end-if
   end-if
  end-if
 end-procedure
@@ -1553,18 +1990,13 @@ end-procedure
 procedure stopxsrv
  if PIDFILE<>"" and filexists(PIDFILE) then
   fcopy(PIDFILE,"text:tfile")
-  if sysname="windows" then
-  ! Win32: no way to kill a process from a 32bit process on a 64bit system...
-   system("tskill "+tfile)
-!   system("taskkill /F /PID "+tfile)
-   if getsysstat=0 then
-    fdelete(PIDFILE)
-    logmsg(MSL_INF,"xprmsrv server stopped")
-   else
-    logmsg(MSL_WAR,"Warning: failed to kill xprmsrv server (pid:",tfile,")")
-   end-if
+  fdelete(PIDFILE)
+  pid:=tfile ! 'tfile' is used by system_log
+  trim(pid)
+  cmdkill:=if(sysname="windows","tskill","kill")
+  if system_log(cmdkill,pid) then
+   logmsg(MSL_WAR,"Warning: failed to kill xprmsrv server (pid:",pid,")")
   else
-   system("kill "+tfile)
    logmsg(MSL_INF,"xprmsrv server stopped")
   end-if
  end-if
@@ -1573,7 +2005,7 @@ end-procedure
 !*****************************************
 !* Execute 'make' on the remote instance
 !*****************************************
-function domake(f:text):boolean
+function domake(wkr:s_worker,f:text):boolean
  fopen("tmp:domake.mos",F_OUTPUT)
  writeln(`DOMAKE
 model domake
@@ -1584,7 +2016,7 @@ end-parameters
 DOMAKE`)
 
  if usenmake then
-  writeln('system("nmake /nologo "+TODO)')
+  writeln('system("nmake -nologo "+TODO)')
  else
   writeln('system("make "+TODO)')
  end-if
@@ -1594,35 +2026,7 @@ exit(getsysstat)
 end-model
 DOMAKE`)
  fclose(F_OUTPUT)
- returned:=execmos("rmt:tmp:domake.mos",text("TODO=")+f)<>0
-end-function
-
-!********************************************
-!* Run an executable on the remote instance
-!********************************************
-function dorun(f:text):boolean
- fopen("tmp:dorun.mos",F_OUTPUT)
- writeln(`DOMAKE
-model domake
-uses 'mmsystem'
-parameters
- TODO=""
-end-parameters
-system(TODO)
-exit(getsysstat)
-end-model
-DOMAKE`)
- fclose(F_OUTPUT)
- if endswith(f,".class") then
-  if sysname="windows" then
-   todo:=text('java -enableassertions ')+copytext(f,1,f.size-6)
-  else
-   todo:=text('java -d')+sysarch+" -enableassertions "+copytext(f,1,f.size-6)
-  end-if
- else
-  todo:='.'+DIRSEP+f
- end-if
- returned:=execmos("rmt:tmp:dorun.mos",text("TODO='")+todo+"'")<>0
+ returned:=execmos(wkr,"rmt:tmp:domake.mos",text("TODO=")+f)<>0
 end-function
 
 !*************************************************
@@ -1681,15 +2085,42 @@ function logfile2text(f:string):text
  end-if
 end-function
 
+!**********************************
+!* Call 'system' and save output
+!**********************************
+function system_log(cmd:string,args:...):boolean
+ fopen("tmp:sys_out.log",F_OUTPUT)
+ fopen("tmp:sys_err.log",F_ERROR)
+ system(cmd,args)
+ returned:=getsysstat<>0
+ fclose(F_ERROR)
+ fclose(F_OUTPUT)
+ if getfsize("tmp:sys_out.log")>0 then
+  tolog:=logfile2text("tmp:sys_out.log")
+  if getchar(tolog,tolog.size)=getchar("\n"):
+                                          deltext(tolog,tolog.size,tolog.size)
+  logmsg(MSL_INF,tolog)
+ end-if
+ if getfsize("tmp:sys_err.log")>0 then
+  tolog:=logfile2text("tmp:sys_err.log")
+  if getchar(tolog,tolog.size)=getchar("\n"):
+                                          deltext(tolog,tolog.size,tolog.size)
+  logmsg(MSL_ERR,tolog)
+ end-if
+ fdelete("tmp:sys_out.log")
+ fdelete("tmp:sys_err.log")
+end-function
+
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 declarations
- function checkpackage(scs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
+ function checkpackage(wkr:s_worker,scs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
  procedure compcov(sfs:array(sf:set of string) of s_srcfile)
  procedure genreport(srcf:s_srcfile,src:string,covdir:text)
  procedure genlcovinfo(scs:array(sf:set of string) of s_srcfile,covdir:text)
- function addsrcfile(scs:array(string) of s_srcfile,src:string,appzip:text):boolean
+ procedure gencoberturaxml(scs:array(sf:set of string) of s_srcfile,covdir:text)
+ function addsrcfile(workdir:string,scs:array(string) of s_srcfile,src:string,appzip:text):boolean
  function countlines(f:text):integer
- function findsrc(f:string,appzip:text):text
+ function findsrc(workdir:string,f:string,appzip:text):text
  function lndx2file(l:integer):integer
  function lndx2line(l:integer):integer
 end-declarations
@@ -1716,18 +2147,22 @@ procedure build_srcfiles(sfs:array(sf:set of string) of s_srcfile,pkgs:list of t
   allpkgs:set of constant text
   lsf:list of string
   ft:text
+  dummy:s_test
  end-declarations
 
- startinstance
+ ! use a dummy test context running on worker 1 for this operation
+ dummy.num:=0
+ dummy.wid:=1
+ attachworker("dummy",dummy)
  forall(p in pkgs) do
   trim(p)
-  if p<>"" and p not in allpkgs and checkpackage(sfs,p,lsf,ft) then
+  if p<>"" and p not in allpkgs and checkpackage(workers(1),sfs,p,lsf,ft) then
    logmsg(MSL_INF," + ",ft," '",p,"' registered ",lsf)
    allpkgs+={p}
   end-if
  end-do
- cleardir(WKDIR,false)
- endinstance(true)
+ cleardir(workers(1).workdir,false)
+ detachworker(dummy)
 
  if sf.size=0 then
   fatalerror(3,"No package for coverage")
@@ -1737,7 +2172,7 @@ end-procedure
 !****************************************************
 !* Save coverage data from mdr on minst
 !****************************************************
-procedure savecovres(sfs:array(sf:set of string) of s_srcfile)
+procedure savecovres(wkr:s_worker,sfs:array(sf:set of string) of s_srcfile)
  declarations
   Rlines:range
   lines:array(Rlines) of integer
@@ -1749,7 +2184,7 @@ procedure savecovres(sfs:array(sf:set of string) of s_srcfile)
  end-declarations
 
  localsetparam("ioctrl",true)
- nid:=getid(minst)
+ nid:=getid(wkr.minst)
  initialisations from "bin:rmt:["+nid+"]mcmd:covres@1"
   Rlines lines iters
   Rfiles files
@@ -1785,20 +2220,16 @@ procedure reportcov(sfs:array(sf:set of string) of s_srcfile,covdir:text,mode:in
  if mode<>0 then
   makedir(covdir)
   logmsg(MSL_INF,"Saving reports in '",covdir,"':")
-  if bittest(mode,1)=1 then
-   forall(s in sf)
-    genreport(sfs(s),s,covdir)
-  end-if
-  if bittest(mode,2)=2 then
-   genlcovinfo(sfs,covdir)
-  end-if
+  if bittest(mode,1)=1: forall(s in sf) genreport(sfs(s),s,covdir)
+  if bittest(mode,2)=2: genlcovinfo(sfs,covdir)
+  if bittest(mode,4)=4: gencoberturaxml(sfs,covdir)
  end-if
 end-procedure
 
 !****************************************************
 ! Load a model/package and extract source information
 !****************************************************
-function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
+function checkpackage(wkr:s_worker,sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list of string,ft:text):boolean
  declarations
   appzip:text
   path:text
@@ -1814,11 +2245,13 @@ function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list
   sign:  array(Rsign) of text
   lndx:  array(Rsign) of integer
   name:  array(Rsign) of text
+
+  dummy:s_test
  end-declarations
 
  reset(lsf)
  ft:="Package"
- nid:=getid(minst)
+ nid:=getid(wkr.minst)
  forall(pfx in bim_dirs) do
   if endswith(pkg,".zip") then
    path:=expandpath(pfx+DIRSEP+pkg)
@@ -1836,14 +2269,14 @@ function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list
  if path.size>0 then
   localsetparam("ioctrl",true)
   if appzip<>"" then
-   cleardir(WKDIR,false,true)
-   bimfile:=expandpath(WKDIR+DIRSEP+expandapp(WKDIR,path))
-   load(minst,mdr,bimfile,"l","","","")
+   cleardir(wkr.workdir,false)
+   bimfile:=expandpath(wkr.workdir+DIRSEP+expandapp(wkr.workdir,path))
+   load(wkr.minst,wkr.mdr,bimfile,"l","","","")
   else
-   load(minst,mdr,path,"l","","","")
+   load(wkr.minst,wkr.mdr,path,"l","","","")
   end-if
   if getparam("iostatus")=0 then
-   if findtext(getmodprop(mdr,PROP_SYSCOM),"PKG,",1)<1 then
+   if findtext(getmodprop(wkr.mdr,PROP_SYSCOM),"PKG,",1)<1 then
     ft:=if(appzip="","Model","Application")
    end-if
    initialisations from "bin:rmt:["+nid+"]mcmd:dbglndx@1"
@@ -1851,10 +2284,10 @@ function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list
     Rlines lines
    end-initialisations
    if getparam("iostatus")=0 and Rfiles.size>0 and 
-      findtext(getmodprop(mdr,PROP_SYSCOM),",trace,",1)>0 then
+      findtext(getmodprop(wkr.mdr,PROP_SYSCOM),",trace,",1)>0 then
     oldfiles:=sf
     forall(j in Rfiles)
-     if endswith(files(j),".mos") and addsrcfile(sfs,files(j),appzip) then
+     if endswith(files(j),".mos") and addsrcfile(wkr.workdir,sfs,files(j),appzip) then
       lsf+=[files(j)]
       nbs+=1
      end-if
@@ -1866,7 +2299,7 @@ function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list
      ! locate effective statements
      forall(i in Rlines,f=lndx2file(lines(i))| files(f) in newfiles)
       with s=sfs(files(f)),l=lndx2line(lines(i)) do
-       if l in s.rlines then
+       if l in s.rlines and s.lincov(l)<0 then
         s.lincov(l):=0
 	s.nbl+=1
        end-if
@@ -1899,10 +2332,9 @@ function checkpackage(sfs:array(sf:set of string) of s_srcfile,pkg:text,lsf:list
    end-if
   else
    ! display instance errors
-   if not SHOWLOGS: fcopy(WKDIR+"/"+ERR,"")
+   if not SHOWLOGS or NBW>1: fcopy(errlog(dummy),"")
    logmsg(MSL_ERR," Failed to load '",path,"'!!!")
   end-if
-  unload(mdr)
  else
   logmsg(MSL_ERR," Package '",pkg,"' not found!!!")
  end-if
@@ -1980,6 +2412,85 @@ procedure genreport(srcf:s_srcfile,src:string,covdir:text)
  end-if
 end-procedure
 
+!**********************************************
+!* Generate the report as a cobertura XML file
+!**********************************************
+procedure gencoberturaxml(sfs:array(sf:set of string) of s_srcfile,covdir:text)
+ declarations
+  cob: xmldoc
+  crepfile:text
+  appdir:text
+  nc,np,ncl,ncls,nls,nl,nms:integer
+  tlh,tl: integer
+ end-declarations
+
+ localsetparam("ioctrl",true)
+ crepfile:=covdir+DIRSEP+"moseltest.xml"
+ logmsg(MSL_INF," + 'moseltest.xml'")
+ n:=addnode(cob,0,XML_LASTCHILD,XML_DATA,"<!DOCTYPE coverage SYSTEM 'http://cobertura.sourceforge.net/xml/coverage-04.dtd'>")
+ nc:=addnode(cob,0,XML_LASTCHILD,XML_ELT,"coverage")
+ n:=addnode(cob,nc,XML_LASTCHILD,XML_ELT,"packages")
+ np:=addnode(cob,n,XML_LASTCHILD,XML_ELT,"package")
+ setattr(cob,np,"name","moseltest")
+ setattr(cob,np,"complexity",0)
+ ncls:=addnode(cob,np,XML_LASTCHILD,XML_ELT,"classes")
+ forall(s in sf,srcf=sfs(s)) do
+  ncl:=addnode(cob,ncls,XML_LASTCHILD,XML_ELT,"class")
+  if startswith(srcf.path,"zlib.zip:") then
+   if appdir="" then
+    appdir:=expandpath(covdir+DIRSEP+"appsrc")
+    makedir(appdir)
+    appdir+=DIRSEP
+   end-if
+   fname:=appdir+pathsplit(SYS_FNAME,s)
+   fcopy(srcf.path,fname)
+   setattr(cob,ncl,"name",fname)
+   setattr(cob,ncl,"filename",fname)
+  else
+   setattr(cob,ncl,"name",srcf.path)
+   setattr(cob,ncl,"filename",srcf.path)
+  end-if
+  setattr(cob,ncl,"line-rate",formattext("%j",if(srcf.nbl>0,srcf.nblh/srcf.nbl,0)))
+  setattr(cob,ncl,"branch-rate",0)
+  setattr(cob,ncl,"complexity",0)
+  tlh+=srcf.nblh
+  tl+=srcf.nbl
+  nms:=addnode(cob,ncl,XML_LASTCHILD,XML_ELT,"methods")
+  forall(f in srcf.fctstart.index(1),lc=srcf.lincov(srcf.fctstart(f))) do
+   nm:=addnode(cob,nms,XML_LASTCHILD,XML_ELT,"method")
+   setattr(cob,nm,"name",srcf.fctnames(f))
+   setattr(cob,nm,"signature",srcf.fctnames(f))
+   setattr(cob,nm,"line-rate",1)
+   setattr(cob,nm,"branch-rate",1)
+   n:=addnode(cob,nm,XML_LASTCHILD,XML_ELT,"lines")
+   n:=addnode(cob,n,XML_LASTCHILD,XML_ELT,"line")
+   setattr(cob,n,"hits",lc)
+   setattr(cob,n,"number",srcf.fctstart(f))
+   setattr(cob,n,"branch","false")
+  end-do
+  nls:=addnode(cob,ncl,XML_LASTCHILD,XML_ELT,"lines")
+  forall(i in srcf.rlines,lc=srcf.lincov(i)|lc>=0,nbl as counter) do
+   nl:=addnode(cob,nls,XML_LASTCHILD,XML_ELT,"line")
+   setattr(cob,nl,"branch","false")
+   setattr(cob,nl,"hits",lc)
+   setattr(cob,nl,"number",i)
+  end-do   
+ end-do
+ setattr(cob,np,"line-rate",formattext("%j",if(tl>0,tlh/tl,0)))
+ setattr(cob,np,"branch-rate",0)
+ setattr(cob,nc,"line-rate",formattext("%j",if(tl>0,tlh/tl,0)))
+ setattr(cob,nc,"lines-covered",tlh)
+ setattr(cob,nc,"lines-valid",tl)
+ setattr(cob,nc,"branch-rate",0)
+ setattr(cob,nc,"branch-covered",0)
+ setattr(cob,nc,"branch-valid",0)
+ setattr(cob,nc,"complexity",0)
+ setattr(cob,nc,"version","2.0.0")
+ setattr(cob,nc,"timestamp",floor(getasnumber(datetime(SYS_NOW))))
+ save(cob,crepfile)
+ if getparam("iostatus")<>0: logmsg(MSL_ERR," I cannot create the report file '",crepfile,"'!!!")
+end-procedure
+
 !****************************************************
 !* Generate the report as an lcov info file
 !****************************************************
@@ -2034,7 +2545,7 @@ end-procedure
 !****************************************************
 !* Add a new file to the array of source files
 !****************************************************
-function addsrcfile(sfs:array(sf:set of string) of s_srcfile,src:string,appzip:text):boolean
+function addsrcfile(workdir:string,sfs:array(sf:set of string) of s_srcfile,src:string,appzip:text):boolean
  declarations
   path:text
   src2:text
@@ -2043,11 +2554,11 @@ function addsrcfile(sfs:array(sf:set of string) of s_srcfile,src:string,appzip:t
  if src in sf then
   returned:=true
  else
-  path:=findsrc(src,appzip)
+  path:=findsrc(workdir,src,appzip)
   if path="" then
    src2:=pathsplit(SYS_FNAME,src)
    if src2<>src then
-    path:=findsrc(string(src2),appzip)
+    path:=findsrc(workdir,string(src2),appzip)
    end-if
   end-if
   if path="" then
@@ -2077,7 +2588,7 @@ end-function
 !****************************************************
 !* Try to find a source file
 !****************************************************
-function findsrc(f:string,appzip:text):text
+function findsrc(workdir:string,f:string,appzip:text):text
  declarations
   lsf:list of text
  end-declarations
@@ -2091,7 +2602,7 @@ function findsrc(f:string,appzip:text):text
  else
   if returned="" and appzip<>"" then
    ! the zip file has been expanded in WKDIR
-   findfiles(SYS_RECURS+SYS_NODIR,lsf,WKDIR+DIRSEP+"source",f)
+   findfiles(SYS_RECURS+SYS_NODIR,lsf,workdir+DIRSEP+"source",f)
    if lsf.size=1 then
     returned:=text("zlib.zip:"+appzip+",source/"+mkuxpath(f))
    end-if
@@ -2157,13 +2668,14 @@ end-function
 declarations
  tty_ctx=record
  	   sttime:real
-           endtestpxf:string
+           endtestpxf:text
 	   nbtests,nbskipped:integer
+	   nbtodo:integer
          end-record
  procedure tty_logmsg(msglev:integer,tolog:...)
  procedure tty_startsuite(tslabel:text,nbtests:integer)
  procedure tty_endsuite
- procedure tty_logtest(tres:s_tres)
+ procedure tty_logtest(starting:boolean,tres:s_test)
  procedure tty_fatalerror(ecode:integer,msg:text)
 end-declarations
 
@@ -2175,7 +2687,6 @@ procedure tty_init
   ctx:tty_ctx
  end-declarations
  ctx.sttime:=gettime
- if SHOWLOGS: ctx.endtestpxf:="   "
  rctx:=->ctx
  fatalerror:=->tty_fatalerror
  logmsg:=->tty_logmsg
@@ -2207,6 +2718,7 @@ end-procedure
 !*********************************
 procedure tty_startsuite(tslabel:text,nbtests:integer)
  rctx.tty_ctx.nbtests:=nbtests
+ rctx.tty_ctx.nbtodo:=nbtests
 end-procedure
 
 !*********************************
@@ -2219,32 +2731,54 @@ end-procedure
 !*********************************
 ! TTY: Logging before/after test
 !*********************************
-procedure tty_logtest(tres:s_tres)
+procedure tty_logtest(starting:boolean,tres:s_test)
+ declarations
+  toprt:text
+ end-declarations
  with ctx=rctx.tty_ctx do
-  if tres.status=TST_TOSTART then	! Test starting
+  if starting then	! Test starting
    if tres.num=1then
     writeln("-- Starting testing procedure --")
     ctx.sttime:=gettime
    end-if
-   write(" + ",tres.label,": ")
-   if SHOWLOGS then
-    writeln
-   else
-    if tres.label.size+3+2<TPLEN then
-     write(" "*(TPLEN-3-2-tres.label.size))
+   if NBW<=1 then
+    toprt:=" + "+tres.label+":"
+    write(toprt)
+    if SHOWLOGS then
+     writeln
+     toprt:=" ====================== "+tres.label+":"
+     ctx.endtestpxf:=toprt+if(toprt.size<TPLEN," "*(TPLEN-toprt.size),text(''))
+    else
+     if toprt.size<TPLEN then
+      write(" "*(TPLEN-toprt.size))
+     end-if
+     fflush
     end-if
-    fflush
    end-if
   else					! Test finished
+   ctx.nbtodo-=1
+   if NBW>1 then
+    toprt:=" + "+tres.label+if(LOGWKR,text(":["+tres.wid+"#"+tres.wnbt+"]"),text(":"))
+    write(toprt)
+    if SHOWLOGS then
+     writeln
+     showlogs(tres)
+     toprt:=" ====================== "+tres.label+":"
+     write(toprt)
+    end-if
+    if toprt.size<TPLEN then
+     write(" "*(TPLEN-toprt.size))
+    end-if
+   end-if
    if tres.status=TST_SKIPPED then
-    writeln(ctx.endtestpxf,"Skipped (",testres.msg,")")
+    writeln(ctx.endtestpxf,cyellow,"Skipped (",tres.msg,")",cblack)
     ctx.nbskipped+=1
    elif tres.status<>TST_SUCCESS then
-    writeln(ctx.endtestpxf,testres.msg,"!!!")
+    writeln(ctx.endtestpxf,cred,tres.msg,"!!!",cblack)
    else
-    writeln(ctx.endtestpxf,formattext("Done in %.3fs",testres.time))
+    writeln(ctx.endtestpxf,cgreen,formattext("Done in %.3fs",tres.time),cblack)
    end-if
-   if tres.num=ctx.nbtests then		! Last test finished: show report
+   if ctx.nbtodo=0 then		! Last test finished: show report
     writeln("-- End of testing procedure --")
     writeln("Total time: ",formattext("%.3fs",gettime-ctx.sttime))
     if ctx.nbskipped=ctx.nbtests then
@@ -2281,17 +2815,17 @@ end-procedure
 !********************************* TC: Teamcity message service
 declarations
  tc_ctx=record
-         tclabel:text
+         tclabels:dynamic array(integer) of text
 	 tslabel:text
         end-record
  procedure tc_logmsg(msglev:integer,tolog:...)
  procedure tc_startsuite(tslabel:text,nbtests:integer)
  procedure tc_endsuite
- procedure tc_logtest(tres:s_tres)
+ procedure tc_logtest(starting:boolean,tres:s_test)
  procedure tc_fatalerror(ecode:integer,msg:text)
  procedure tc_quote(t:text)
  function tc_getfile(f:string):text
- procedure tc_savelogs(tcl:text)
+ procedure tc_savelogs(tcl:text,tres:s_test)
 end-declarations
 
 !*********************************
@@ -2353,30 +2887,46 @@ end-procedure
 !*********************************
 ! TC: Logging before/after test
 !*********************************
-procedure tc_logtest(tres:s_tres)
- if tres.status=TST_TOSTART then	! Test starting
-   rctx.tc_ctx.tclabel:=text("name='")+tres.label+"'"
-   writeln("##teamcity[testStarted ",rctx.tc_ctx.tclabel,"]")
- else					! Test finished
-  tc_quote(testres.msg)
-  if tres.status=TST_SKIPPED then
-    writeln("##teamcity[testIgnored ",rctx.tc_ctx.tclabel," message='",testres.msg,"']")
-  elif tres.status<>TST_SUCCESS then
-    writeln("##teamcity[testFailed ",rctx.tc_ctx.tclabel," message='",testres.msg,"']")
+procedure tc_logtest(starting:boolean,tres:s_test)
+ with ctx=rctx.tc_ctx do
+  if starting then	! Test starting
+   ctx.tclabels(tres.num):=text("name='")+tres.label+"'"+
+			if(NBW>1 and ASYNCOUT," flowId='mt"+tres.num+"'","")
+   if NBW<2 or ASYNCOUT then
+     writeln("##teamcity[testStarted ",ctx.tclabels(tres.num),"]")
+   end-if
+  else					! Test finished
+   tclabel:=ctx.tclabels(tres.num)
+   if NBW>1 then
+    if not ASYNCOUT: writeln("##teamcity[testStarted ",tclabel,"]")
+    if LOGWKR: writeln("##teamcity[testMetadata testName='",tres.label,
+     			"' name='worker' value='",tres.wid,"#",tres.wnbt,"']")
+   end-if
+   tc_quote(tres.msg)
+   if tres.status=TST_SKIPPED then
+     writeln("##teamcity[testIgnored ",tclabel," message='",tres.msg,"']")
+   elif tres.status<>TST_SUCCESS then
+     writeln("##teamcity[testFailed ",tclabel," message='",tres.msg,"']")
+   end-if
+   if SAVELOGS or tres.status>=TST_ERROR: tc_savelogs(tclabel,tres)
+   writeln("##teamcity[testFinished ",tclabel,formattext(" duration='%.0f'",tres.time*1000),"]")
+   delcell(ctx.tclabels(tres.num))
   end-if
-  if SAVELOGS or tres.status>=TST_ERROR: tc_savelogs(rctx.tc_ctx.tclabel)
-  writeln("##teamcity[testFinished ",rctx.tc_ctx.tclabel,formattext(" duration='%.0f'",testres.time*1000),"]")
-  rctx.tc_ctx.tclabel:=""
- end-if
+ end-do
 end-procedure
 
 !*********************************
 ! TC: Fatal error and exit
 !*********************************
 procedure tc_fatalerror(ecode:integer,msg:text)
+ declarations
+  toclose:set of integer
+ end-declarations
  if rctx.tc_ctx.tslabel<>"" then
-  if rctx.tc_ctx.tclabel<>"" then
-   tc_logtest(s_tres(.status:=TST_ERROR,.msg:="aborting"))
+  if rctx.tc_ctx.tclabels.size>0 then
+   toclose:=union(t in rctx.tc_ctx.tclabels.index(1)| exists(rctx.tc_ctx.tclabels(t))) {t}
+   forall(t in toclose)
+    tc_logtest(false,s_test(.status:=TST_ERROR,.msg:="aborting",.num:=t))
   end-if
   tc_endsuite
  end-if
@@ -2404,13 +2954,15 @@ end-function
 !*******************
 ! Save logs for TC
 !*******************
-procedure tc_savelogs(tcl:text)
+procedure tc_savelogs(tcl:text,tres:s_test)
  if MAXLOGLEN>=0 then
-  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
-   writeln("##teamcity[testStdOut ",tcl," out='",tc_getfile(WKDIR+"/"+OUT),"']")
+  outfile:=outlog(tres)
+  errfile:=errlog(tres)
+  if isnonempty(outfile) then
+   writeln("##teamcity[testStdOut ",tcl," out='",tc_getfile(outfile),"']")
   end-if
-  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
-   writeln("##teamcity[testStdErr ",tcl," out='",tc_getfile(WKDIR+"/"+ERR),"']")
+  if isnonempty(errfile) then
+   writeln("##teamcity[testStdErr ",tcl," out='",tc_getfile(errfile),"']")
   end-if
  end-if
 end-procedure
@@ -2421,11 +2973,11 @@ declarations
  procedure tap_logmsg(msglev:integer,tolog:...)
  procedure tap_startsuite(tslabel:text,nbtests:integer)
  procedure tap_endsuite
- procedure tap_logtest(tres:s_tres)
+ procedure tap_logtest(starting:boolean,tres:s_test)
  procedure tap_fatalerror(ecode:integer,msg:text)
  function tap_quote(t:text):text
  procedure tap_file2yaml(f:string,label:string)
- procedure tap_savelogs(num:integer)
+ procedure tap_savelogs(tres:s_test)
 end-declarations
 
 !*********************************
@@ -2487,11 +3039,11 @@ end-procedure
 !*********************************
 ! TAP: Logging before/after test
 !*********************************
-procedure tap_logtest(tres:s_tres)
- if tres.status<>TST_TOSTART then	! Test starting
+procedure tap_logtest(starting:boolean,tres:s_test)
+ if not starting then	! end of test
   dsep:=if(rctx.integer=14," - "," ")
   if tres.status=TST_SKIPPED then
-    writeln("ok ",tres.num,dsep,tap_quote(tres.label)," # SKIP ",tap_quote(testres.msg))
+    writeln("ok ",tres.num,dsep,tap_quote(tres.label)," # SKIP ",tap_quote(tres.msg))
   else
    if tres.status<>TST_SUCCESS then
     writeln("not ok ",tres.num,dsep,tap_quote(tres.label))
@@ -2499,9 +3051,10 @@ procedure tap_logtest(tres:s_tres)
     writeln("ok ",tres.num,dsep,tap_quote(tres.label))
    end-if
    writeln("  ---")
-   writeln(formattext("  duration_ms: %.0f",testres.time*1000))
-   if testres.msg<>'' : writeln("  message: ",quote(testres.msg,0,0))
-   if SAVELOGS or tres.status>=TST_ERROR: tap_savelogs(tres.num)
+   if NBW>1 and LOGWKR: writeln("  worker: '",tres.wid,"#",tres.wnbt,"'")
+   writeln(formattext("  duration_ms: %.0f",tres.time*1000))
+   if tres.msg<>'' : writeln("  message: ",quote(tres.msg,0,0))
+   if SAVELOGS or tres.status>=TST_ERROR: tap_savelogs(tres)
    writeln("  ...")
   end-if
  end-if
@@ -2554,20 +3107,22 @@ end-procedure
 !*******************
 ! Save logs for TAP
 !*******************
-procedure tap_savelogs(num:integer)
+procedure tap_savelogs(tres:s_test)
  if MAXLOGLEN>=0 then
+  outfile:=outlog(tres)
+  errfile:=errlog(tres)
   headprinted:=false
-  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
+  if isnonempty(outfile) then
    writeln("  extensions:\n   Files:")
    headprinted:=true
-   tap_file2yaml(WKDIR+"/"+OUT,"out_"+num+".txt")
+   tap_file2yaml(outfile,"out_"+tres.num+".txt")
   end-if
-  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
+  if isnonempty(errfile) then
    if not headprinted then
     writeln("  extensions:\n   Files:")
     headprinted:=true
    end-if
-   tap_file2yaml(WKDIR+"/"+ERR,"err_"+num+".txt")
+   tap_file2yaml(errfile,"err_"+tres.num+".txt")
   end-if
  end-if
 end-procedure
@@ -2576,18 +3131,18 @@ end-procedure
 !********************************* JUNIT: Teamcity message service
 declarations
  jut_ctx=record
-         tclabel:text
+         tclabels:dynamic array(integer) of text
 	 tslabel:text
 	 logs:text
         end-record
  procedure jut_logmsg(msglev:integer,tolog:...)
  procedure jut_startsuite(tslabel:text,nbtests:integer)
  procedure jut_endsuite
- procedure jut_logtest(tres:s_tres)
+ procedure jut_logtest(starting:boolean,tres:s_test)
  procedure jut_fatalerror(ecode:integer,msg:text)
  procedure jut_quote(t:text)
  function jut_getfile(f:string):text
- procedure jut_savelogs
+ procedure jut_savelogs(tres:s_test)
 end-declarations
 
 !*********************************
@@ -2611,6 +3166,7 @@ end-procedure
 procedure jut_logmsg(msglev:integer,tolog:...)
  forall(m in tolog)
   rctx.jut_ctx.logs+=text(m)
+ rctx.jut_ctx.logs+="\n"
 end-procedure
 
 !*********************************
@@ -2648,41 +3204,57 @@ end-procedure
 !*********************************
 ! JUNIT: Logging before/after test
 !*********************************
-procedure jut_logtest(tres:s_tres)
- if tres.status=TST_TOSTART then	! Test starting
-   rctx.jut_ctx.tclabel:=tres.label
-   jut_quote(rctx.jut_ctx.tclabel)
- else					! Test finished
-  jut_quote(testres.msg)
-  write('  <testcase name="',rctx.jut_ctx.tclabel,'" calssname="',rctx.jut_ctx.tslabel,'" time="',formattext("%.3f",tres.time),'"')
-  if tres.status=TST_SKIPPED then
-    writeln(">\n    <skipped message=\"",testres.msg,'"/>')
-  elif tres.status=TST_ERROR then
-    writeln(">\n    <error message=\"",testres.msg,'"/>')
-  elif tres.status<>TST_SUCCESS then
-    writeln(">\n    <failure message=\"",testres.msg,'"/>')
-  elif not SAVELOGS then
-    writeln('/>')
+procedure jut_logtest(starting:boolean,tres:s_test)
+ with ctx=rctx.jut_ctx do
+  if starting then	! Test starting
+   ctx.tclabels(tres.num):=tres.label
+   jut_quote(ctx.tclabels(tres.num))
+  else					! Test finished
+   write('  <testcase name="',ctx.tclabels(tres.num),
+         '" calssname="',ctx.tslabel,'" time="',
+ 	formattext("%.3f",tres.time),'"')
+   if tres.status=TST_SKIPPED then
+     writeln(">\n    <skipped message=\"",tres.msg,'"/>')
+   elif tres.status=TST_ERROR then
+     writeln(">\n    <error message=\"",tres.msg,'"/>')
+   elif tres.status<>TST_SUCCESS then
+     writeln(">\n    <failure message=\"",tres.msg,'"/>')
+   elif not SAVELOGS and (NBW<2 or not LOGWKR) then
+     writeln('/>')
+   else
+     writeln('>')
+   end-if
+   if NBW>1 and LOGWKR then
+     writeln('    <properties>',
+             '<property name="worker" value="',tres.wid,"#",tres.wnbt,'" />',
+             '</properties>')
+   end-if
+   if SAVELOGS or tres.status>=TST_ERROR: jut_savelogs(tres)
+   if tres.status<>TST_SUCCESS or SAVELOGS then
+    writeln('  </testcase>')
+   end-if
+   delcell(ctx.tclabels(tres.num))
   end-if
-  if SAVELOGS or tres.status>=TST_ERROR: jut_savelogs
-  if tres.status<>TST_SUCCESS or SAVELOGS then
-   writeln('  </testcase>')
-  end-if
-  rctx.jut_ctx.tclabel:=""
- end-if
+ end-do
 end-procedure
 
 !*********************************
 ! JUNIT: Fatal error and exit
 !*********************************
 procedure jut_fatalerror(ecode:integer,msg:text)
+ declarations
+  toclose:set of integer
+ end-declarations
  if rctx.jut_ctx.tslabel<>"" then
-  if rctx.jut_ctx.tclabel<>"" then
-   jut_logtest(s_tres(.status:=TST_ERROR,.msg:="aborting"))
+  if rctx.jut_ctx.tclabels.size>0 then
+   toclose:=union(t in rctx.jut_ctx.tclabels.index(1)| exists(rctx.jut_ctx.tclabels(t))) {t}
+   forall(t in toclose)
+    jut_logtest(false,s_test(.status:=TST_ERROR,.msg:="aborting",.num:=t))
   end-if
   jut_logmsg(MSL_ERR,"Fatal error: "+msg+"! Aborting.")
   jut_endsuite
  else
+  if rctx.jut_ctx.logs.size>0: fwrite(2,rctx.jut_ctx.logs)
   fwriteln(2,"Fatal error: "+msg+"! Aborting.")
  end-if
  exit(ecode)
@@ -2712,13 +3284,15 @@ end-function
 !*******************
 ! Save logs for JUNIT
 !*******************
-procedure jut_savelogs
+procedure jut_savelogs(tres:s_test)
  if MAXLOGLEN>=0 then
-  if filexists(WKDIR+"/"+OUT) and getfsize(WKDIR+"/"+OUT)>0 then
-   writeln("    <system-out>\n",jut_getfile(WKDIR+"/"+OUT),"    </system-out>")
+  outfile:=outlog(tres)
+  errfile:=errlog(tres)
+  if isnonempty(outfile) then
+   writeln("    <system-out>\n",jut_getfile(outfile),"    </system-out>")
   end-if
-  if filexists(WKDIR+"/"+ERR) and getfsize(WKDIR+"/"+ERR)>0 then
-   writeln("    <system-err>\n",jut_getfile(WKDIR+"/"+ERR),"    </system-err>")
+  if isnonempty(errfile) then
+   writeln("    <system-err>\n",jut_getfile(errfile),"    </system-err>")
   end-if
  end-if
 end-procedure
