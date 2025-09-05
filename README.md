@@ -44,7 +44,7 @@ Mosel using source Mosel files, C programs or Java programs
 * Mosel model and program examples: [Examples database](http://examples.xpress.fico.com/example.pl#mosel)
 
 ## Installation
-If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](https://content.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, *Shrinkwrap License Agreement, FICO Xpress Optimization Suite, FICO Xpress Insight*.  
+If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](https://content.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, [Shrinkwrap License Agreement, FICO Xpress Optimization Suite, FICO Xpress Insight](https://www.fico.com/en/shrinkwrap-license-agreement-fico-xpress-optimization-suite-on-premises).
 
 #### Requirements
 > Mosel modules are C programs, you need a C compiler to generate new DSO. 
