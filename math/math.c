@@ -27,8 +27,8 @@ cl /nologo /MD /I%XPRESSDIR%\include /LD math.c /Femath.dso
 gcc -Wall -o math.dso -shared -D_REENTRANT -I${XPRESSDIR}/include math.c -lm
 */
 #define VMAJ 1
-#define VMIN 0
-#define VREL 1
+#define VMIN 2
+#define VREL 0
 
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +64,7 @@ static int ma_rint(XPRMcontext ctx,void *libctx);
 static int ma_scalb(XPRMcontext ctx,void *libctx);
 static int ma_sign(XPRMcontext ctx,void *libctx);
 static int ma_sign_i(XPRMcontext ctx,void *libctx);
+static int ma_signbit(XPRMcontext ctx,void *libctx);
 static int ma_todeg(XPRMcontext ctx,void *libctx);
 static int ma_torad(XPRMcontext ctx,void *libctx);
 static int ma_round2d(XPRMcontext ctx,void *libctx);
@@ -186,6 +187,7 @@ static XPRMdsofct tabfct[]=
          {"sign",1027,XPRM_TYP_INT,1,"i",ma_sign_i},
          {"todeg",1028,XPRM_TYP_REAL,1,"r",ma_todeg},
          {"torad",1029,XPRM_TYP_REAL,1,"r",ma_torad},
+         {"signbit",1030,XPRM_TYP_BOOL,1,"r",ma_signbit},
 
          {"round2d",1040,XPRM_TYP_REAL,1,"r",ma_round2d},
          {"roundnd",1041,XPRM_TYP_REAL,2,"ri",ma_roundnd},
@@ -557,6 +559,15 @@ static int ma_sign_i(XPRMcontext ctx,void *libctx)
  return XPRM_RT_OK;
 }
 
+/**************************************/
+/* Return true if the sign bit is set */
+/**************************************/
+static int ma_signbit(XPRMcontext ctx,void *libctx)
+{
+ XPRM_TOP_ST(ctx)->integer=signbit(XPRM_TOP_ST(ctx)->real)!=0;
+ return XPRM_RT_OK;
+}
+
 /************/
 /* RAD->DEG */
 /************/
@@ -719,6 +730,11 @@ static void ma_updvers(int type,int what,int *v)
 	{
 	 if((what>=1300)&&(what<=1374))	/* int64 routines */
 	 { *v=XPRM_MKVER(1,0,0); return; }
+	}
+	if(*v<XPRM_MKVER(1,2,0))
+	{
+	 if(what==1030)	/* signbit */
+	 { *v=XPRM_MKVER(1,2,0); return; }
 	}
 	break;
   case XPRM_UPDV_TYPE:

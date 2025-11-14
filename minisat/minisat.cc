@@ -1,5 +1,5 @@
 /********************************************************
-  File minisat.cc  
+  File minisat.cc
   ```````````````
   Example module interfacing to a SAT solver using the Mosel NI
   * problem representation via logical clauses
@@ -9,13 +9,13 @@
   author: T. Berthold, Z. Csizmadia
 
   (c) Copyright 2019 Fair Isaac Corporation
- 
+
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
- 
+
        http://www.apache.org/licenses/LICENSE-2.0
- 
+
     Unless required by applicable law or agreed to in writing, software
     distributed under the License is distributed on an "AS IS" BASIS,
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,9 +32,12 @@
 #include <math.h>
 #include <ctype.h>
 
-#include "core/Solver.h"        // Solver library header file 
-#define XPRM_NICOMPAT 4000000   // Compatibility level: Mosel 4.0.0 
-#include "xprm_ni.h"            // Mosel NI header file 
+#include "core/Solver.h"        // Solver library header file
+#ifdef Glucose_Solver_h
+#define Minisat Glucose
+#endif
+#define XPRM_NICOMPAT 4000000   // Compatibility level: Mosel 4.0.0
+#include "xprm_ni.h"            // Mosel NI header file
 
 #include <vector>
 #include <set>
@@ -69,7 +72,7 @@ static mm_dsofct tabfct[] =
 
 //! Module services
 static XPRMdsoserv tabserv[] = {
-  {MM_SRV_RESET, (void*)minisat_reset},  
+  {MM_SRV_RESET, (void*)minisat_reset},
   {MM_SRV_PROVIDER,(void*)"Fair Isaac"}
 };
 
@@ -93,7 +96,7 @@ typedef struct s_logical {
 } minisat_logical;
 
 // Problem specific data (context)
-typedef struct {  
+typedef struct {
   int logical_type;
   int globalNextID; //! Global ID counter; each logical gets a new positive value
   std::set<minisat_logical *> *logicals;
@@ -119,10 +122,10 @@ extern "C" DSO_INIT minisat_init(mm_nifct nifct, int* interver, int* libver, mm_
 
 //! Initialize and reset the module and the problem
 void* minisat_reset(mm_context ctx, void* libctx, int Versnum) {
-  
+
   minisat_problem* minisatProb = NULL;
   std::set<minisat_logical *>::iterator LogicIterator;
-  
+
   if (libctx == NULL) { /* entry call */
 
     minisatProb = (minisat_problem *) calloc(1, sizeof(minisat_problem));
@@ -169,9 +172,9 @@ void* minisat_logical_create(mm_context ctx, void* libctx, void* ref, int typnum
     L->refcnt++;
   }
   else {
-    L = (minisat_logical*)calloc(1, sizeof(minisat_logical));  
+    L = (minisat_logical*)calloc(1, sizeof(minisat_logical));
     if (L == NULL) {
-      free(L); 
+      free(L);
       mm->dispmsg(ctx, "Minisat: Out of memory.\n");
       return NULL;
     }
@@ -183,7 +186,7 @@ void* minisat_logical_create(mm_context ctx, void* libctx, void* ref, int typnum
     // Add a referece to the created logical
     try {
       minisatProb->logicals->insert(L);
-    } 
+    }
     catch (...) {
       free(L);
       mm->dispmsg(ctx, "Minisat: Out of memory.\n");
@@ -226,7 +229,7 @@ void minisat_logical_delete(mm_context ctx, void* libctx, void* todel, int typnu
   minisat_problem* minisatProb = (minisat_problem*)libctx;
   minisat_logical* L = (minisat_logical*) todel;
 
-  if ( (L != NULL) && (--(L->refcnt) < 1) ) { 
+  if ( (L != NULL) && (--(L->refcnt) < 1) ) {
     minisat_logical* L_negated = (minisat_logical*) L->negated;
 
     minisatProb->logicals->erase(L);
@@ -279,7 +282,7 @@ static int xt_minisat_solve(mm_context ctx, void* libctx) {
     mm->dispmsg(ctx, "Minisat: Set NULL reference.\n");
     return RT_ERROR;
   }
-  
+
   if (minisatProb->logical_type < 1) {  // Can this happen?
     mm->dispmsg(ctx, "Minisat: Invalid parameter for `solve', expecting a set of set of logical.\n");
     return RT_ERROR;
@@ -316,7 +319,7 @@ static int xt_minisat_solve(mm_context ctx, void* libctx) {
             else {
               int literal = L->ID;
               unsigned int variable = abs(literal);
-            
+
               if (reverseLookup.size() < variable) {
                 reverseLookup.resize((size_t)variable + 1000);
                 ifSavedNegated.resize((size_t)variable + 1000);
@@ -328,7 +331,7 @@ static int xt_minisat_solve(mm_context ctx, void* libctx) {
               else {
                 ifSavedNegated[variable] = 0;
               }
-            
+
               // create missing variables
               while ((int)variable >= minisat.nVars())
                 minisat.newVar();
@@ -361,7 +364,7 @@ static int xt_minisat_solve(mm_context ctx, void* libctx) {
       for (int var = 1; var < minisat.nVars(); var++) {
         minisat_logical* L = reverseLookup[var];
         assert(toInt(minisat.model[var]) != 2);
-        mm->printf(ctx, "x%d = %s  ", var, toInt(minisat.model[var]) == 0 ? "TRUE" : "FALSE");        
+        mm->printf(ctx, "x%d = %s  ", var, toInt(minisat.model[var]) == 0 ? "TRUE" : "FALSE");
         if (toInt(minisat.model[var]) == 0) {
           L->value = 1 - ifSavedNegated[var];
           if (L->negated) ((minisat_logical*)L->negated)->value = ifSavedNegated[var];
@@ -448,4 +451,4 @@ static int xt_minisat_getsol(mm_context ctx, void* libctx) {
 // END
 ///////////////////////////////////////////////////////////////////////////////
 
-// EOF  
+// EOF
