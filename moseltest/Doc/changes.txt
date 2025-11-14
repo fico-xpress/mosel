@@ -1,0 +1,36 @@
+Version 1.0.0
+ Bugs fixed
+   - JUNIT: invalid XML could be produced on error messages
+
+Version 0.10.5
+ Enhancements/updates:
+  - new parameters: OUTFILE (output redirection), HELP (display of online help)
+  - new Sonar output format for coverage reports
+  - display of summary statistics to console
+
+Version 0.10.1
+ Enhancements/updates:
+  - added selection of tests by labels: new parameters SKIPLABELS, ONLYLABELS, new tag 'labels'.
+  - added optional coloured display with default report format (new parameter COLOR).
+  - coverage report in Cobertura format (enabled with bit 2/value 4 for COVREP).
+
+Version 0.9.1
+ Enhancements/updates:
+  - adding parallel execution of tests; new parameters NBW, ASYNCOUT, LOGWKR,
+  - XSRVLOG; new tags after, sync
+
+Version 0.7.1
+ Enhancements/updates:
+  - adding TINCL,TEXCL lists of file patterns for inclusion/exclusion
+
+Version 0.7.0
+ Enhancements/updates:
+  - new parameters SHOWLOGS, TESTPARAMS, HAVENMAKE; new tag copy
+  - adding Junit and TAP formats, replacing parameters TC and TCMAXLOG by RFMT and MAXLOGLEN
+
+Version 0.5.5
+ Enhancements/updates:
+  - adding coverage mode, mcf configuration files, LIBPATH setting
+  - new tags required / save / restore / model / parms
+  - handle mosinst termination status -3
+  - improve localization of source files, LOGDIR and REPDATEFMT settings

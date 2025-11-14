@@ -4,7 +4,7 @@
 Mosel defines a public C interface (Mosel Native Interface) that allows developers to extend the core functionality of the Mosel language according to their needs, such as the definition of data connectors, solver interfaces, or access to system functionality on the Mosel language level.
 A Mosel program (or model) is a text file that takes the extension `.mos`, it is compiled into a platform-independent `.bim` (**BI**nary **M**odel) file that is then loaded by Mosel to be run with some data instance(s). 
 
-Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/s/fico-xpress-workbench-product-overview) that forms part of the Xpress distribution.  
+Mosel source files can be edited with any text editor of your choice, or you can choose to work with the development environment [FICO Xpress Workbench](https://community.fico.com/s/fico-xpress-workbench-product-overview) that forms part of the Xpress distribution.
 
 Syntax highlighting definitions for Mosel have been created for various editors, including [VI/gvim](https://github.com/fico-xpress/mosel-vim-plugin), [JetBrains IntelliJ Platform](https://github.com/fico-xpress/mosel-syntax-highlighting), [Notepad++](https://github.com/fico-xpress/mosel-syntax-highlighting), [Pygment](https://pygments.org/docs/lexers/#lexers-for-the-mosel-language), [UltraEdit](https://www.ultraedit.com/downloads/extras/wordfiles.html), [Rouge](http://rouge.jneen.net), [VScode](https://marketplace.visualstudio.com/items?itemName=edenporte.mosel-support).
 
@@ -22,18 +22,23 @@ Furthermore, the *moseltest* program provides a general testing framework for so
 
 Component | Type | Description | Notes
 ----------|------|-------------|----------------------
-[myxprs](modules/myxprs/README.md) | DSO | Example of using the Mosel NI matrix handling interface for connecting an LP/MIP solver (Xpress Optimizer) | Requires Xpress Optimizer libraries
-[myqxprs](modules/myqxprs/README.md) | DSO | Example of using the library interface of the module *mmnl* that extends the Mosel NI matrix interface with handling of nonlinearities for connecting an NLP solver (quadratic solver of Xpress Optimizer) | Requires Xpress Optimizer libraries
-[math](modules/math/README.md) | DSO | Additional Maths functions for the Mosel language | Compiled version is included in the Mosel distribution
-[random](modules/random/README.md) | DSO | Alternative random number generators | Compiled version is included in the Mosel distribution
-[minisat](modules/minisat/README.md) | DSO | Example implementation of a simple interface to a SAT solver | Requires SAT solver libraries
-[jobqueue](packages/jobqueue/README.md) | BIM | Managing the remote execution of submodels via *mmjobs* functionality | -
-
+[hadoop](hadoop/README.md) | DSO | An I/O driver for accessing HDFS files  |
+[jobqueue](jobqueue/README.md) | BIM | Managing the remote execution of submodels via *mmjobs* functionality |
+[math](math/README.md) | DSO | Additional Maths functions for the Mosel language | Compiled version is included in the Mosel distribution
+[minisat](minisat/README.md) | DSO | Example implementation of a simple interface to a SAT solver | Requires SAT solver libraries
+[myqxprs](myqxprs/README.md) | DSO | Example of using the library interface of the module *mmnl* that extends the Mosel NI matrix interface with handling of nonlinearities for connecting an NLP solver (quadratic solver of Xpress Optimizer) | Requires Xpress Optimizer libraries
+[myxprs](myxprs/README.md) | DSO | Example of using the Mosel NI matrix handling interface for connecting an LP/MIP solver (Xpress Optimizer) | Requires Xpress Optimizer libraries
+[random](random/README.md) | DSO | Alternative random number generators | Compiled version is included in the Mosel distribution
 
 ### Mosel testing system
 
-[moseltesting](moseltesting/README.md) General framework for testing
+[moseltest](moseltest/README.md) General framework for testing
 Mosel using source Mosel files, C programs or Java programs
+
+### Mosel documentation system
+
+[moseldoc](moseldoc/README.md) General framework for generating
+documentation of Mosel packages
 
 ## Documentation
 * Mosel documentation: 
@@ -44,7 +49,7 @@ Mosel using source Mosel files, C programs or Java programs
 * Mosel model and program examples: [Examples database](http://examples.xpress.fico.com/example.pl#mosel)
 
 ## Installation
-If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](https://content.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, [Shrinkwrap License Agreement, FICO Xpress Optimization Suite, FICO Xpress Insight](https://www.fico.com/en/shrinkwrap-license-agreement-fico-xpress-optimization-suite-on-premises).
+If you do not have any recent installation of FICO Xpress, download the free Xpress Community Edition from [Xpress Community Edition download](https://content.fico.com/xpress-optimization-community-license), located on FICO's website. Please note that this download is solely governed under FICO's Xpress Community License, [Xpress Shrinkwrap License Agreement](https://www.fico.com/en/shrinkwrap-license-agreement-fico-xpress-optimization-suite-on-premises).  
 
 #### Requirements
 > Mosel modules are C programs, you need a C compiler to generate new DSO. 

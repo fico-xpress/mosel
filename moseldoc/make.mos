@@ -1,0 +1,53 @@
+(!******************************************************
+   Mosel Open Source components
+   ============================
+
+   file make.mos
+   `````````````
+   makefile for building moseldoc
+
+   author: Y.Colombani, Nov. 2025
+
+  (c) Copyright 2025 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model make
+uses 'makeutil'
+
+parameters
+ BUILDDIR='build' ! destination directory
+end-parameters
+
+declarations
+ lsf:list of text
+end-declarations
+
+LDFLAGS("linux")+=" -Wl,--enable-new-dtags -Wl,-rpath,$ORIGIN/../lib"
+LDFLAGS("macos")+=" -Wl,-rpath,@executable_path/../lib"
+
+if TODO='locale' then
+ findfiles(lsf,'moseldoc.*.po')
+ runcmd('xprnls','mogen','-d',BUILDDIR+'/locale',lsf)
+elif TODO='i18n' then
+ if isnewer('moseldoc.mos','moseldoc.pot') then
+  runcmd('mosel','comp','-x','moseldoc.mos')
+  findfiles(lsf,'moseldoc.*.po')
+  runcmd('xprnls','update','-m',lsf,'moseldoc.pot')
+ end-if
+else
+ mos2run('moseldoc.mos',BUILDDIR+'/bin/moseldoc')
+end-if
+
+end-model

@@ -1,0 +1,44 @@
+<!-- 
+Introduction chapter of the Jobqueue reference manual
+SH, 25 July 2022
+-->
+
+<chapter id="chapintro"><title>Introduction</title>
+
+<p>The package <i>jobqueue</i> provides a set of Mosel subroutines for managing the remote execution of submodels via <i>mmjobs</i> and <i>mmhttp</i> functionality. Individual model files, optionally with data files, are run on one worker from a pool (queue) of remote machines that are configured via this package. <i>jobqueue</i> also implements the handling of output and errors from the submodels and the generation and retrieval of individual result output files.</p>
+
+<p>
+<img id="imgjobqueue" src="jobqueue" scale="0.55" title="Architecture of jobqueue runs" width="450" texplace="H" /> 
+</p>
+<p>
+ <ul>
+  <li>Step 1: Configuration of queues (node lists)
+   <ul>
+    <li>definition of worker instances (remote via rcmd or xprmsrv, on local node, or on same Mosel instance as the main model), initial status check, connections are opened when needed</li>
+   </ul></li>
+  <li>Step 2: Configuration of <em>computation jobs</em> (models+other required files)
+   <ul>
+    <li>Mosel file to be run (in source or compiled form), optional addition of other required (data) files, optional specification of a result file, optional specification of retry attempts in case of server failure</li>
+   </ul></li>
+  <li>Step 3: Management of <em>task queues</em>
+   <ul>
+    <li>jobs are turned into computation tasks by adding them to a queue, submodel execution starts automatically</li>
+    <li>optional specification of runtime parameters</li>
+   </ul></li>
+  <li>Step 4: Supervision of nodes and model execution on workers via <em>controler programs</em>
+   <ul>
+    <li>waiting for job termination: can perform conditional wait (time limit)</li>
+    <li>explicit deletion of tasks or queues if not busy/being processed</li>
+   </ul></li>
+  <li>Step 5: <em>Reporting</em> functionality
+   <ul>
+    <li>display of queue information: workers, pending and running tasks</li>
+    <li>submodel status (status file, host information file), output produced by submodel run (output log, error log), and optional result file with model-specific contents (only if specified in job definition)</li>
+   </ul></li>
+ </ul>
+</p>
+<p>The package <i>jobqueue</i> requires (at least) Mosel 5. That is, the main model on the local instance that uses this package needs to be run with Mosel 5 or newer, but remote (worker) instances can use older releases (starting with Mosel 4.*).</p>
+
+<p>The main model to be provided by the developer implements the steps outlined avove, that is, it defines the computing tasks, assigns them to a job queue, waits for their termination and (optionally) reports on their status and results. All other components shown in Figure <ref id="imgjobqueue"/> (<i>jobqueue</i> scheduler, controler programs on workers) are created and managed automatically by the jobqueue library. See the file <tt>mainjq.mos</tt> that is provided as test with the <i>jobqueue</i> distribution for a complete example.</p>
+
+</chapter>

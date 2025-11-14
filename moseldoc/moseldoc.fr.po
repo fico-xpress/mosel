@@ -1,0 +1,128 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: moseldoc\n"
+"POT-Creation-Date: 2025-11-12 16:11+0100\n"
+"PO-Revision-Date: 2025-11-12 16:11+0100\n"
+"Last-Translator: Yves Colombani\n"
+"Language: fr\n"
+"Content-Type: text/plain; charset=ISO8859-15\n"
+
+msgid ""
+"\n"
+"Usage: %s [-f] [-u] [-xml|-ixml|-html] [-gd gd] [-o of] [-i sp] bimf|mosf [bimf|mosf...]\n"
+"\n"
+msgstr ""
+"\n"
+"Usage: %s [-f] [-u] [-xml|-ixml|-html] [-gd gd] [-o of] [-i sp] bimf|mosf [bimf|mosf...]\n"
+"\n"
+
+msgid "! Target location `%s' not found\n"
+msgstr "! Destination `%s' non trouvée\n"
+
+msgid "+ Creating `%000T' from `%000T'\n"
+msgstr "+ Création de `%000T' depuis `%000T'\n"
+
+msgid "+ Directory `%000T' already exists. Not regenerating it.\n"
+msgstr "+ Le répertoire `%000T' existe déjà (non regénéré)\n"
+
+msgid "+ Directory `%000T' cannot be created. Ignored.\n"
+msgstr "+ Échec à la création du répertoire `%000T' (ignoré)\n"
+
+msgid "+ File `%000T' already exists. Not regenerating it.\n"
+msgstr "+ Le fichier `%000T' existe déjà (non regénéré)\n"
+
+msgid "+ File `%000T' cannot be loaded. Ignored.\n"
+msgstr "+ Le fichier `%000T' ne peut être chargé (ignoré)\n"
+
+msgid "+ File `%000T' does not contain any `doc.' annotation. Ignored.\n"
+msgstr "+ Le fichier `%000T' ne contient aucune annotation `doc.' (ignoré)\n"
+
+msgid "+ File `%000T' does not include documentation annotations. Ignored.\n"
+msgstr "+ Le fichier `%000T' ne contient aucune annotation de documentation (ignoré\n"
+
+msgid "Annotation '%000T' not found (%s)\n"
+msgstr "L'annotation '%000T' est introuvable (%s)\n"
+
+msgid "Cannot find argument `%000T' for value `%000T' (ignored)\n"
+msgstr "L'argument `%000T' ne peut être trouvé pour la valeur`%000T' (ignoré)\n"
+
+msgid "Cannot group `%s' with `%s' (name not found)\n"
+msgstr "`%s' ne peut être groupé avec `%s' (identificateur introuvable)\n"
+
+msgid "Control parameter '%000T' not found (%s)\n"
+msgstr "Le paramètre de contrôle '%000T' est introuvable (%s)\n"
+
+msgid "Failed to copy image '%000T/%000T'\n"
+msgstr "La copie de l'image '%000T/%000T' a échoué\n"
+
+msgid ""
+"Generate documentation from annotated bim files or mosel sources.\n"
+"  -f     force creation of the document even if it already exists\n"
+"  -u     keep documentation of annotations that are not defined via 'mc.def'\n"
+"  -xml   generate only the XML file\n"
+"  -ixml  generate only the XML file without header/root node (for inclusion)\n"
+"  -html  generate only the HTML document (from an existing XML file)\n"
+"  -gd gd specify the location of image files (default: Graphic)\n"
+"  -o of  write to file 'of' if xml, or directory 'of' if html\n"
+"  -i sp  add 'sp' to the list of paths for file inclusion\n"
+"  -e     exit on XML error\n"
+msgstr ""
+"Génère une documentation depuis du code Mosel annoté (source ou binaire).\n"
+"  -f     force la création du document même si il existe déjà\n"
+"  -u     conserve la documentation des annotations non définies via 'mc.def'\n"
+"  -xml   génère le XML seulement\n"
+"  -ixml  génère le XML seulement sans entête ni racine (pour inclusion)\n"
+"  -html  génère le document HTML à partir d'un XML existant\n"
+"  -gd gd les images sont dans le répertoire 'gd' (par défaut: Graphic)\n"
+"  -o of  sauvegarde dans 'of' si xml, ou dans le répertoire 'of' si html\n"
+"  -i sp  ajoute 'sp' à la liste des chemins pour l'inclusion de fichier\n"
+"  -e     abandon en cas d'erreur dans le XML\n"
+
+msgid "Image '%000T' has no source (ignored)\n"
+msgstr "L'image '%000T' n'a pas de source (ignoré)\n"
+
+msgid "Link date"
+msgstr "Date de création"
+
+msgid "Root node `%s' does not exist\n"
+msgstr "Le noeud racine `%s' n'existe pas\n"
+
+msgid ""
+"The XML file '%000T' could not be loaded (%s)\n"
+"\n"
+msgstr ""
+"Le fichier XML `%000T' ne peut être chargé (%s)\n"
+"\n"
+
+msgid ""
+"The XML file '%000T' does not contain any chapter or section (%s)\n"
+"\n"
+msgstr ""
+"Le fichier XML '%000T' ne contient ni chapitre ni section (%s)\n"
+"\n"
+
+msgid ""
+"The XML file '%000T' includes a section and target location is not defined (%s)\n"
+"\n"
+msgstr ""
+"Le fichier XML '%000T' inclut une section mais le point d'insertion n'est pas défini (%s)\n"
+"\n"
+
+msgid ""
+"The following text is not valid XML (%s):\n"
+"%000T\n"
+msgstr ""
+"Le texte ci-dessous n'est pas du XML valide (%s):\n"
+"%000T\n"
+
+msgid "The image file '%000T' cannot be found (ignored)\n"
+msgstr "Le fichier image '%000T' est introuvable (ignoré)\n"
+
+msgid "Topics covered in this chapter:"
+msgstr "Sujets couverts par ce chapitre:"
+
+msgid "abort"
+msgstr "abandon"
+
+msgid "ignored"
+msgstr "ignoré"

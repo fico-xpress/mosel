@@ -1,0 +1,83 @@
+(!******************************************************
+   Mosel Open Source components
+   ============================
+
+   file make.mos
+   `````````````
+   makefile for building the hadoop module
+
+   author: Y.Colombani, Nov. 2025
+
+  (c) Copyright 2025 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model make
+uses 'makeutil'
+
+parameters
+ BUILDDIR='build' ! destination directory
+end-parameters
+
+if runmode<>'clean' then
+ if OS<>"linux" or ARCH<>64 then
+  writeln("This module can only be built on Linux 64bit")
+  exit(1)
+ end-if
+
+ java_home:=getenv("JAVA_HOME")
+ hadoop_home:=getenv("HADOOP_HOME")
+
+ if hadoop_home='' or not isdir(hadoop_home+'/include') or
+    not isdir(hadoop_home+'/lib/native') then
+  writeln("HADOOP_HOME not defined or invalid")
+  exit(1)
+ else
+  INCDIRS('linux')+=[hadoop_home+'/include']
+  LIBDIRS('linux')+=[hadoop_home+'/lib/native']
+  LIBS('linux')+=['hdfs']
+ end-if
+
+ if java_home='' or not isdir(java_home) then
+  writeln("JAVA_HOME not defined or invalid")
+  exit(1)
+ end-if
+
+ forall(p in ["/include","/../include"])
+  if isdir(java_home+p) then
+   java_inc:=java_home+p
+  end-if
+ if java_inc='' then
+  writeln("Include files for Java not found")
+  exit(1)
+ else
+  INCDIRS('linux')+=[java_inc,java_inc+"/linux"]
+ end-if
+
+ arch:=if(PROC='arm',"aarch64","amd64")
+ forall(p in ["/lib/server","/lib/"+arch+"/server","/jre/lib/"+arch+"/server"])
+  if isdir(java_home+p) then
+   java_lib:=java_home+p
+  end-if
+ if java_lib='' then
+  writeln("JVM library for Java not found")
+  exit(1)
+ else
+  LIBDIRS('linux')+=[java_lib]
+  LIBS('linux')+=['jvm']
+ end-if
+end-if
+
+c2dso('hadoop.c',BUILDDIR+'/dso/hadoop.dso')
+end-model

@@ -1,0 +1,290 @@
+/* 
+ *  File moseldoc.css
+ *  -- Style sheet for Xpress documentation --
+ *
+ *  Copyright (c) 2008-2022 Fair Isaac Corporation. All rights reserved.
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+*/
+        a         { font-weight: 500; color: #00629b; text-decoration: none}
+        a:hover   { font-weight: 500; background-color: #f2f2f2; /*text-decoration: underline*/}
+
+        address
+          { color: #6e6d6a;
+            font-size: 9pt; font-style: normal; font-weight: normal;
+            margin-left: 0em; margin-top: 0.5em; margin-bottom: 0.5em;
+            text-align: justify; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        body
+          { background-color: #FFFFFF;
+            color: #000000;
+            font-family: 'Roboto', Verdana, Geneva, Helvetica, Arial, sans-serif;
+          }
+        .BackToTop::before 
+          { content: " \21EB "; }
+       .Body
+          { color: #000000;
+            font-size: 10pt; font-style: normal; font-weight: normal;
+            margin-left: 0em; margin-top: 4pt; margin-bottom: 4pt;
+            text-align: justify; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .CellBody
+          { color: #000000;
+            font-size: 10pt; font-style: normal; font-weight: normal;
+            margin-left: 0pt; margin-top: 0pt; margin-bottom: 0pt;
+            text-align: justify; text-indent: 0pt; text-decoration: none;
+            white-space: normal }
+        .CellHeading
+          { color: #000000;
+            font-size: 10pt; font-style: normal; font-weight: bold;
+            margin-left: 0pt; margin-top: 0pt; margin-bottom: 0pt;
+            text-align: center; text-indent: 0pt; text-decoration: none;
+            white-space: normal }
+	.Chapter
+	  { color: #6e6d6a; margin-bottom: 2pt;
+	    font-size: 21pt; font-style: normal; font-weight: 500;
+	    text-align: left }
+	.ChapterLine
+	  { height: 1px; color: #cccccc; background-color: #9f9e9b;  }
+	.Code
+	  { font-family: 'Roboto Mono', Courier }
+	.DLItem
+	  { color: #000000; font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-left: 0em; margin-top: 4pt; 
+	    margin-bottom: 4pt; text-align: justify; text-indent: 0em; 
+	    text-decoration: none; white-space: normal; }
+	.DLText
+	  { color: #000000; font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-left: 28pt; margin-top: -4pt; 
+	    margin-bottom: 0pt; text-align: justify; text-indent: 0em; 
+	    text-decoration: none; white-space: normal; }
+	.DLTextV
+	  { color: #000000; font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-top: -4pt; 
+	    margin-bottom: 0pt; text-align: justify; text-indent: 0em; 
+	    text-decoration: none; white-space: normal; }
+	.Entity
+	  { color: #003f5f;  font-size: 10pt; font-style: normal; 
+	    font-weight: bold; margin-bottom: 0pt; margin-left: 0pt; 
+	    margin-right: 18pt; margin-top: 0pt; text-align: left; 
+	    text-decoration: none; text-indent: 0pt; text-transform: none; 
+	    vertical-align: baseline }
+	.EntItem
+	  { color: #000000;  font-size: 10pt; font-style: normal; 
+	    font-weight: bold; margin-bottom: 0pt; margin-left: 0pt; 
+	    margin-right: 18pt; margin-top: 0pt; text-align: left; 
+	    text-decoration: none; text-indent: 0pt; text-transform: none; 
+	    vertical-align: baseline }
+        .EntLabel
+          { color: #000000;
+            font-size: 10pt; font-style: normal; font-weight: normal;
+	    font-family: 'Roboto Mono', Courier; margin-left: 0pt; 
+            margin-right: 5pt; margin-top: 0pt; margin-bottom: 0pt;
+            text-align: justify; text-indent: 0pt; text-decoration: none;
+            white-space: normal }
+	.EntSynopsis
+	  { color: #003f5f; font-family: 'Roboto Mono', Courier; 
+	    font-size: 10pt; font-style: normal; 
+	    font-weight: bold; margin-bottom: 0pt; margin-left: 42pt; 
+	    margin-right: 18pt; margin-top: 0pt; text-align: left; 
+	    text-decoration: none; text-indent: -42pt; text-transform: none; 
+	    vertical-align: baseline} 
+	.EntTab
+	  { margin-left: -5pt; margin-top: 0pt; margin-bottom: 3pt }
+	.EntValTab
+	  { margin-left: -0pt; margin-top: 0pt; margin-bottom: 0pt }
+  	.FctArg
+	  { color: #000000; font-family: Courier; font-size: 11pt; 
+	    font-style: normal; font-weight: normal; margin-bottom: 0pt; 
+	    margin-left: 18pt; margin-right: 0pt; margin-top: 0pt; 
+	    text-align: left; text-decoration: none; text-indent: -18pt; 
+	    text-transform: none; vertical-align: baseline }
+  	.FctCode
+	  { color: #000000; font-family: 'Roboto Mono', Courier; 
+	    font-size: 10pt; background-color:#f2f2f2;
+	    padding:0px 9.5px; line-height:1.42857143;
+	    word-break:break-all; word-wrap:break-word;
+	    border:1px solid #ccc; border-radius:4px; 
+	    font-style: normal; font-weight: normal; margin-bottom: 2pt; 
+	    margin-left: 63pt; margin-right: 0pt; margin-top: 2pt; 
+	    text-align: left; text-decoration: none; text-indent: 0pt; 
+	    text-transform: none; vertical-align: baseline }
+  	.FctControl
+	  { color: #000000;  font-size: 10pt; font-style: italic; 
+	    font-weight: normal; margin-bottom: 0pt; margin-left: 28pt; 
+	    margin-right: 0pt; margin-top: 0pt; text-align: left; 
+	    text-decoration: none; text-indent: 0pt; text-transform: none; 
+	    vertical-align: baseline }
+	.FctInfo
+	  { color: #000000;  font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-bottom: 3pt; margin-left: 42pt; 
+	    margin-right: 0pt; margin-top: 0pt; text-align: justify; 
+	    text-decoration: none; text-indent: -14pt; text-transform: none; 
+	    vertical-align: baseline }
+	.FctItem
+	  { color: #003f5f;  font-size: 10pt; font-style: normal; 
+	    font-weight: bold; margin-bottom: 0pt; margin-left: 2pt; 
+	    margin-right: 0pt; margin-top: 12pt; text-align: left; 
+	    text-decoration: none; text-indent: 0pt; text-transform: none; 
+	    vertical-align: baseline }
+	.FctItemText
+	  { color: #000000;  font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-bottom: 0pt; margin-left: 42pt; 
+	    margin-right: 0pt; margin-top: 0pt; text-align: justify; 
+	    text-decoration: none; text-indent: 0pt; text-transform: none; 
+	    vertical-align: baseline }    
+	.FctLine
+	  { height: 1px; color: #cccccc; background-color: #9f9e9b;
+	    margin-top: 0pt;}
+  	.FctList
+	  { margin-bottom: 0pt; margin-left: 28pt; margin-right: 0pt; 
+	    margin-top: 0pt; border: off; }
+  	.FctListTab
+	  { margin-bottom: 0pt; margin-left: 28pt; margin-right: 0pt; 
+	    margin-top: 0pt; border-color: black; border-style: solid; 
+	    border-width: 1pt 0pt 1pt 0pt; }
+  	.FctListTabHeader
+	  { color: #000000; font-size: 10pt; font-style: normal; 
+	    font-weight: bold; text-align: justify; text-indent: 0pt; 
+	    margin-bottom: 0pt; margin-left: 0pt; margin-right: 0pt; 
+	    margin-top: 0pt; }
+	.FctName
+	  { color: #004D94; margin-bottom: 2pt; margin-left: 2pt;
+	    font-size: 20pt; font-style:normal; font-weight: 500;
+	    text-align: left }
+	.FctSynopsis
+	  { color: #000000; font-family: 'Roboto Mono', Courier; 
+	    font-size: 10pt;
+	    font-style: normal; font-weight: normal; margin-bottom: 0pt; 
+	    margin-left: 56pt; margin-right: 0pt; margin-top: 0pt; 
+	    text-align: left; text-decoration: none; text-indent: -14pt; 
+	    text-transform: none; vertical-align: baseline }
+	.FctTab
+	  { margin-left: 40pt }
+	.FctTitle
+	  { margin-top: 14pt; }
+	.Navi
+	  { color: #00629b;
+	    font-size: 10pt; font-style: normal; font-weight: normal;
+	    text-align: right }
+	.ParamInfo
+	  { color: #000000;  font-size: 10pt; font-style: normal; 
+	    font-weight: normal; margin-bottom: 3pt; margin-left: 0pt; 
+	    margin-right: 0pt; margin-top: 0pt; text-align: justify; 
+	    text-decoration: none; text-indent: -14pt; text-transform: none; 
+	    vertical-align: baseline}
+	.PreCode
+	  { color: #000000; font-family: 'Roboto Mono', Courier; 
+	    font-size: 10pt; background-color:#f2f2f2;
+	    padding:9.5px; margin:0 0 10px; line-height:1.42857143;
+	    word-break:break-all; word-wrap:break-word;
+	    border:1px solid #ccc; border-radius:4px;
+	    font-style: normal; font-weight: normal; margin-bottom: 3pt; 
+	    margin-left: 28pt; margin-right: 0pt; margin-top: 3pt; 
+	    text-align: left; text-decoration: none; text-indent: 0pt; 
+	    text-transform: none; vertical-align: baseline }
+	.Section
+	  { color: #6e6d6a;
+	    font-size: 22px; font-style: normal; font-weight: 300;
+	    margin-left: 0em; margin-top: 20pt; margin-bottom: 15pt;
+            text-align: left; text-indent: 0pt; text-decoration: none }
+	.Sectiona
+	  { color: #00629B; font-weight: 500; }
+	.Sectiona:hover
+	  { background-color: #f2f2f2; font-weight: 500; }
+	.SectionListTitle
+	  { margin-bottom: 0pt; margin-left: 0pt; margin-right: 0pt; 
+	    margin-top: 15pt; color: #00629b; 
+	    font-size: 10pt; font-style:normal; font-weight: bold;
+	    text-align: left; }
+  	.SectionOverview
+	  { margin-bottom: 2pt; margin-left: 0pt; margin-right: 0pt; 
+	    margin-top: 1pt; border: off; color: #00629b; font-size: 10pt; }
+  	.SectionOverview ul
+	  { list-style: none;}
+  	.SectionOverview ul li::before
+	  { content: "\279E"; color: #00629b; 
+	    font-size: 10pt; font-style: normal; font-weight: normal;
+	    margin-top: 0pt; margin-bottom: 0pt;
+	    display: inline-block; width: 1.5em; margin-left: -1.5em; }
+  	.SubSectionOverview
+	  { margin-bottom: 0pt; margin-left: 0pt; margin-right: 0pt; 
+	    margin-top: 0pt; border: off; color: #00629b; font-size: 10pt; }
+  	.SubSectionOverview ul li::before
+	  { content: "\279E"; color: #00629b;
+	    font-size: 10pt; font-style: normal; font-weight: normal;
+	    margin-top: 0pt; margin-bottom: 0pt;
+	    display: inline-block; width: 1.5em; margin-left: -1.5em; }
+	.SubSection
+	  { color: #6e6d6a; text-transform: uppercase;
+	    font-size: 15px; font-style: normal; font-weight: 500;
+	    margin-left: 0em; margin-top: 15pt; margin-bottom: 10pt;
+            text-align: left; text-indent: 0pt; text-decoration: none }
+	.SubSubSection
+	  { color: #004D94;
+	    font-size: 14px; font-style: normal; font-weight: 500;
+	    margin-left: 0pt; margin-top: 8pt; margin-bottom: 4pt;
+  	    text-align: justify; text-indent: 0pt; text-decoration:none }
+        table, ul, ol
+          { color: #000000;
+            font-family: 'Roboto', Verdana, Geneva, Helvetica, Arial, sans-serif;
+            text-align: justify; font-size: 12px }
+        .TitleColor
+          { color: #6e6d6a }
+        .TOC1
+          { color: #00629B;
+            font-size: 12pt; font-style: normal; font-weight: 500;
+            margin-left: 0em; margin-top: 10pt; margin-bottom: 0.25em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC1a
+          { font-weight: 500; color: #00629B;
+            margin-left: 0em; margin-top: 10pt; margin-bottom: 0.25em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC1a:hover
+          { background-color: #cccccc; text-decoration: none;
+            font-size: 12pt; font-style: normal; font-weight: 500;
+            margin-left: 0em; margin-top: 10pt; margin-bottom: 0.25em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC2
+          { color: #00629B;
+            font-size: 10pt; font-style: normal; font-weight: normal;
+            margin-left: 1.75em; margin-top: 0em; margin-bottom: 0em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC2a
+          { color: #00629b; }
+        .TOC2a:hover
+          { background-color: #cccccc; }
+        .TOC3
+          { color: #00629b;
+            font-size: 10pt; font-style: normal; font-weight: normal;
+            margin-left: 3.5em; margin-top: 0em; margin-bottom: 0em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC3a
+          { color: #00629b; }
+        .TOC3a:hover
+          { background-color: #cccccc; }
+        .TOC4
+          { color: #00629B;
+            font-size: 9pt; font-style: normal; font-weight: normal;
+            margin-left: 5.25em; margin-top: 0em; margin-bottom: 0em;
+            text-align: left; text-indent: 0em; text-decoration: none;
+            white-space: normal }
+        .TOC4a
+          { color: #00629B; }
+        .TOC4a:hover
+          { background-color: #cccccc; }

@@ -1,0 +1,55 @@
+(!*******************************************************
+   Mosel Testing Examples 
+   ====================== 
+ 
+   file processincludes.mos 
+   ```````````````````````` 
+   This file demoes the use of various 'moseltest' tags
+   and how to run submodels with include files:
+   * 'setenv' serves to define environment variables for the submodels
+   * 'outexpect' checks output produced by this model and the submodels
+ 
+   author: S.Heipcke, Nov 2022
+
+  (c) Copyright 2022 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+ *******************************************************!)
+!*! setenv TOINC1=myinclfile.mos
+!*! setenv TOINC2=myotherinclfile.mos 
+!*! outexpect Output from myinclfile.
+!*! outexpect i=50
+!*! outexpect Model terminated successfully.
+!*! outexpect Output from myinclfile.
+!*! outexpect i=50
+
+model "Processing includes"
+ uses "mmjobs"
+ options keepassert
+
+ declarations
+   m: Model
+ end-declarations
+
+! Executing several models
+ forall(f in ["incltest","incltest2"]) do
+   writeln("####Processing model ", f)
+   assert(compile(f+".mos")=0, "Error compiling model "+f+".mos")
+   load(m, f+".bim")
+   run(m,"VAL=5")       ! Specify a new value for runtime parameter VAL
+   wait
+   dropnextevent
+ end-do
+ 
+end-model

@@ -1,0 +1,101 @@
+# Created by Mosel v6.11.0 from 'moseldoc.mos'
+# Domain name: moseldoc
+
+msgid ""
+"\n"
+"Usage: %s [-f] [-u] [-xml|-ixml|-html] [-gd gd] [-o of] [-i sp] bimf|mosf [bimf|mosf...]\n"
+"\n"
+msgstr ""
+
+msgid "! Target location `%s' not found\n"
+msgstr ""
+
+msgid "+ Creating `%000T' from `%000T'\n"
+msgstr ""
+
+msgid "+ Directory `%000T' already exists. Not regenerating it.\n"
+msgstr ""
+
+msgid "+ Directory `%000T' cannot be created. Ignored.\n"
+msgstr ""
+
+msgid "+ File `%000T' already exists. Not regenerating it.\n"
+msgstr ""
+
+msgid "+ File `%000T' cannot be loaded. Ignored.\n"
+msgstr ""
+
+msgid "+ File `%000T' does not contain any `doc.' annotation. Ignored.\n"
+msgstr ""
+
+msgid "+ File `%000T' does not include documentation annotations. Ignored.\n"
+msgstr ""
+
+msgid "Annotation '%000T' not found (%s)\n"
+msgstr ""
+
+msgid "Cannot find argument `%000T' for value `%000T' (ignored)\n"
+msgstr ""
+
+msgid "Cannot group `%s' with `%s' (name not found)\n"
+msgstr ""
+
+msgid "Control parameter '%000T' not found (%s)\n"
+msgstr ""
+
+msgid "Failed to copy image '%000T/%000T'\n"
+msgstr ""
+
+msgid ""
+"Generate documentation from annotated bim files or mosel sources.\n"
+"  -f     force creation of the document even if it already exists\n"
+"  -u     keep documentation of annotations that are not defined via 'mc.def'\n"
+"  -xml   generate only the XML file\n"
+"  -ixml  generate only the XML file without header/root node (for inclusion)\n"
+"  -html  generate only the HTML document (from an existing XML file)\n"
+"  -gd gd specify the location of image files (default: Graphic)\n"
+"  -o of  write to file 'of' if xml, or directory 'of' if html\n"
+"  -i sp  add 'sp' to the list of paths for file inclusion\n"
+"  -e     exit on XML error\n"
+msgstr ""
+
+msgid "Image '%000T' has no source (ignored)\n"
+msgstr ""
+
+msgid "Link date"
+msgstr ""
+
+msgid "Root node `%s' does not exist\n"
+msgstr ""
+
+msgid ""
+"The XML file '%000T' could not be loaded (%s)\n"
+"\n"
+msgstr ""
+
+msgid ""
+"The XML file '%000T' does not contain any chapter or section (%s)\n"
+"\n"
+msgstr ""
+
+msgid ""
+"The XML file '%000T' includes a section and target location is not defined (%s)\n"
+"\n"
+msgstr ""
+
+msgid ""
+"The following text is not valid XML (%s):\n"
+"%000T\n"
+msgstr ""
+
+msgid "The image file '%000T' cannot be found (ignored)\n"
+msgstr ""
+
+msgid "Topics covered in this chapter:"
+msgstr ""
+
+msgid "abort"
+msgstr ""
+
+msgid "ignored"
+msgstr ""

@@ -1,0 +1,3593 @@
+(!********************************************************
+  * Mosel Example Programs                              
+  * ======================                              
+  *                                                     
+  * file moseldoc.mos                                   
+  * `````````````````                                   
+  * Example for the use of the Mosel language           
+  * (A documentation generator for Mosel files)  
+  *
+  * See file mddoc.mos for usage examples and explanations
+  *                                                     
+  * (c) 2015 Fair Isaac Corporation                     
+  *     author: Y. Colombani, S. Heipcke, rev. Feb. 2022
+  *******************************************************!)
+
+! This program can be used either from Mosel:
+! >mosel moseldoc -- filename
+!
+! Or it can be turned into an executable using 'deploy' with the command:
+! >mosel comp moseldoc.mos -o deploy.exe:moseldoc
+! The resulting program expects as its parameters a list of files:
+! >moseldoc filename
+
+model moseldoc
+version 1.12.0
+uses 'mmjobs','mmxml','deploy'
+
+forward procedure process_file(fn:text)
+forward procedure banner
+forward procedure showhelp
+forward function basename(f:text):text
+forward function gendocxml(fno:text,repl:boolean,rmode:integer,outfile:text):boolean
+forward procedure gendochtml(fname:text,repl:boolean,outdir:text)
+forward procedure add_fieldval(fa:array(fld:set of string,vals:set of string) of string,val:text)
+
+declarations
+ lsfile:list of string
+ lsf2:list of text
+ lsip:list of text
+ repl:boolean
+ exitonerror:boolean
+ keepundefannot:boolean
+ ifmathj:boolean
+ rmode:integer
+ rout:text
+ grdir:text
+ xd:xmldoc
+ public xmltext:text
+
+ ! for dochtml
+ DEFCHAP="defchap.html"
+ firstchap:text
+ glbcom,glbcom1,glbcom2:text
+
+ css=datablock("moseldoc.css")
+ mathjs=datablock("load-mathjax.js")
+end-declarations
+
+ if argc=2 and argv(2)="-V" then
+  banner
+  exit(0)
+ elif argc<2 then
+  banner
+  showhelp
+  exit(1)
+ else
+  grdir:="Graphic"
+  repeat
+   if argv(2)="-f" then
+    repl:=true
+    shiftargv
+   elif argv(2)="-u" then
+    keepundefannot:=true
+    shiftargv
+   elif argv(2)='-xml' then
+    rmode:=1
+    shiftargv
+   elif argv(2)='-ixml' then
+    rmode:=3
+    shiftargv
+   elif argv(2)='-html' then
+    rmode:=2
+    shiftargv
+   elif argv(2)="-o" and argc>2 then
+    rout:=text(argv(3))
+    shiftargv(2)
+   elif argv(2)="-e" then
+    exitonerror:=true
+    shiftargv
+   elif argv(2)="-i" and argc>2 then
+    lsip+=[text(argv(3))]
+    shiftargv(2)
+   elif argv(2)="-gd" and argc>2 then
+    grdir:=text(argv(3))
+    shiftargv(2)
+   else
+    break
+   end-if
+  until argc<2
+  while(argc>1) do
+   lsfile+=[argv(2)]
+   shiftargv
+  end-do
+ end-if
+
+ setparam("datetimefmt","%d/%m/%y %0H:%0M:%0S")
+ forall(f in lsfile) do
+  lsf2:=[]
+  findfiles(SYS_NODIR,lsf2,f)
+  if lsf2.size>0 then
+   forall(f2 in lsf2)
+    if bittest(getfstat(f2),SYS_TYP)<>SYS_DIR then
+     process_file(f2)
+    end-if
+  elif bittest(getfstat(f),SYS_TYP)<>SYS_DIR then
+   process_file(f)
+  end-if
+ end-do
+
+!**************************
+!* Process a single file
+!**************************
+procedure process_file(fn:text)
+ if rmode=0 then
+  if gendocxml(fn,repl,0,"") then
+   gendochtml(fn,repl,rout)
+  end-if
+ elif rmode=1 or rmode=3 then
+  dummy:=gendocxml(fn,repl,rmode,rout)
+ else
+  gendochtml(fn,repl,rout)
+ end-if
+end-procedure
+
+!***********************
+!* Display Banner
+!***********************
+procedure banner
+ write("FICO Xpress ",basename(argv(1))," v",getparam("model_version"))
+ if versionnum("xpress")>0 then
+  writeln(", FICO xpress v",versionstr("xpress"))
+ else
+  writeln
+ end-if
+ writeln("(c) Copyright Fair Isaac Corporation 2015-2025. All rights reserved")
+ writeln(_("Link date"),": ",getparam("parser_date")," ",getparam("parser_time"))
+end-procedure
+
+!***********************
+!* Display some help
+!***********************
+procedure showhelp
+ writeln_("\nUsage: ",argv(1)," [-f] [-u] [-xml|-ixml|-html] [-gd gd] [-o of] [-i sp] bimf|mosf [bimf|mosf...]\n")
+ write_(`
+Generate documentation from annotated bim files or mosel sources.
+  -f     force creation of the document even if it already exists
+  -u     keep documentation of annotations that are not defined via 'mc.def'
+  -xml   generate only the XML file
+  -ixml  generate only the XML file without header/root node (for inclusion)
+  -html  generate only the HTML document (from an existing XML file)
+  -gd gd specify the location of image files (default: Graphic)
+  -o of  write to file 'of' if xml, or directory 'of' if html
+  -i sp  add 'sp' to the list of paths for file inclusion
+  -e     exit on XML error
+`)
+end-procedure
+
+!**********************************************************************
+!* Extract the basename of a path (i.e. strip directory and extension)
+!**********************************************************************
+function basename(f:text):text
+ returned:=pathsplit(SYS_FNAME,f)
+ dummy:=pathsplit(SYS_EXTN,returned,returned)
+end-function
+
+!*****************************************************************************
+!*****************************************************************************
+!*
+!*  Generation of the xml file from a bim file (with annotations)
+!*
+!*****************************************************************************
+!*****************************************************************************
+
+declarations
+ Location=record
+   bn:integer		! 'base' node
+   pn:integer		! 'parameters' node
+   cn:integer		! 'constants' node
+   tn:integer		! 'constants' node
+   vn:integer		! 'variables' node
+   fn:integer		! 'functions' node
+   pp:integer		! paragraphs
+ end-record
+end-declarations
+
+forward procedure reindent(xd:xmldoc,n:integer,spc:integer)
+forward function createlocs(sections:array(locs:set of string) of Location,relocs:array(alocs:set of string) of string,bn:integer,glbann:array(glbs:set of string) of string):boolean
+forward procedure process_inc(m:Model,sections:array(locs:set of string) of Location)
+forward procedure process_glb(bn:integer,ann:string,elt:string,glbann:array(glbs:set of string) of string)
+forward procedure process_glb(bn:integer,ann:string,elt:string,glbann:array(glbs:set of string) of string,txthtml:boolean)
+forward function ignored(m:Model,symb:string):boolean
+forward function isreqmt(m:Model,symb:string):boolean
+forward function findparams(m:Model,s:set of string):set of string
+forward function findtypes(m:Model,s:set of string):set of string
+forward function findfcts(m:Model,s:set of string,rs:set of string):set of string
+forward function findcsts(m:Model,s:set of string):set of string
+forward procedure process_param(m:Model,sections:array(set of string) of Location,relocs:array(set of string) of string,ndx:string,par:string)
+forward procedure process_const(m:Model,sections:array(set of string) of Location,relocs:array(set of string) of string,ndx:string,cst:string)
+forward procedure process_typdef(m:Model,sections:array(set of string) of Location,relocs:array(set of string) of string,ndx:string,typ:string)
+forward procedure process_var(m:Model,sections:array(set of string) of Location,relocs:array(set of string) of string,ndx:string,cst:string)
+forward procedure process_varreq(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,v:string)
+forward procedure process_fct(m:Model,sections:array(set of string) of Location,relocs:array(set of string) of string,ndx:string,cst:string)
+forward procedure process_fctreq(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,fct:string)
+forward procedure process_annots(annotMod:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string)
+forward procedure process_cparams(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string)
+forward function startswith(t:text,ls:set of string):boolean
+forward procedure addvalues(t:text, nd:integer)
+forward procedure addbounds(t:text, nd:integer)
+forward function getindex(l:list of string,locs:set of string,relocs:array(alocs:set of string) of string):string
+forward function findblank(val:text,pos:integer): integer
+forward procedure add_fctpar(pe:integer,elt:string,attr:string,val:text)
+forward procedure add_fctparval(pe:integer,val:text)
+forward procedure add_field(fa:array(fld:set of string) of string,val:text)
+forward procedure add_entries(nid:integer,nds:list of string,gn:string,subgn:string,val:string)
+forward procedure add_entries(nid:integer,gn:string,subgn:string,val:string)
+forward function storeparag(val:text,nd:integer,w:integer,parg:string,src:string):integer
+forward procedure text2xml(val:text,nid:integer)
+forward procedure text2xml(val:text,nid:integer,wh:integer)
+forward procedure text2xmlhdr(val:text,nid:integer)
+forward procedure include_xml(f:text,loc:string,sections:array(locs:set of string) of Location)
+forward procedure quoteconst(p:integer,n:string)
+forward function addafter(p:integer,name:string,nds:list of string):integer
+forward function split_tloc(tl:text):set of string
+forward function fixxmlid(id:text):text
+forward procedure setsafeentname(nid:integer,name:string)
+forward function havenodes(x:xmldoc,s:string,lsd:list of integer):boolean
+
+!***************************************************
+!* Generate the XML documentation from a bim
+!***************************************************
+function gendocxml(fno:text,repl:boolean,rmode:integer,outfile:text):boolean
+ declarations
+  m:Model
+  glbs,sa:set of string
+  glbann:array(glbs) of string
+  l,parg:list of string
+  fname,extn,bname:text
+  parset,fctset,typset,varset,cstset,fctreqset,varreqset:set of string
+  rootbn:integer
+  locs,alocs:set of string
+  sections:array(locs) of Location
+  relocs:array(alocs) of string
+ end-declarations
+
+ fname:=fno
+ inname:=""
+ if findtext(fname,".",1)<1 then
+  if outfile="" then
+   outfile:=fname+"_doc.xml"
+  end-if
+  fname+=".bim"
+  extn:="bim"
+ else
+  extn:=pathsplit(SYS_EXTN,fname,bname)
+  if extn="mos" then
+   if compile("Ds",string(fname),"mem:bim")=0 then
+    inname:="mem:bim"
+    extn:="bim"
+   end-if
+  end-if
+  if outfile="" then
+   outfile:=bname+"_doc.xml"
+  end-if
+ end-if
+
+ if extn="bim" then 	! we silently skip files with an unkown extension
+  if not repl and getfstat(outfile)<>0 then
+   writeln_("+ File `",outfile,"' already exists. Not regenerating it.")
+   returned:=true
+  else
+   setparam("ioctrl",true)
+    load(m,if(inname="",string(fname),inname),"l","","","")
+   setparam("ioctrl",false)
+   if getparam("iostatus")<>0 then
+    writeln_("+ File `",fname,"' cannot be loaded. Ignored.")
+   else
+    getannotations(m,"","doc.",glbs,glbann)
+    if glbs.size<1 then
+     writeln_("+ File `",fname,"' does not include documentation annotations. Ignored.")
+    else
+     getannidents(m,sa)
+     ready_for_gen:=true
+    end-if
+   end-if
+  end-if
+
+  if ready_for_gen and (glbs.size>0 or sa.size>0) then
+   comnode:=addnode(xd,0,XML_COM,text("\nGenerated by moseldoc v")+
+   		getparam("model_version")+
+   		" from "+pathsplit(SYS_FNAME,fname)+"\n"+
+   		"Creation date:"+text(datetime(SYS_NOW))+"\n")
+
+   if ("doc.xmlheader" in glbs) and glbann("doc.xmlheader")<>"" then
+    text2xmlhdr(glbann("doc.xmlheader"),0)
+   end-if
+   if ("doc.xmlroot" in glbs) and glbann("doc.xmlroot")<>"" then
+    rootbn:=getnode(xd,glbann("doc.xmlroot"))
+    if rootbn<=0 then
+     writeln_("Root node `",glbann("doc.xmlroot"),"' does not exist")
+     rootbn:=addnode(xd,0,XML_ELT,"mosel-doc")
+    end-if
+   else
+    rootbn:=getnode(xd,"mosel-doc")
+    if rootbn<1 then
+     rootbn:=addnode(xd,0,XML_ELT,"mosel-doc")
+    end-if
+   end-if
+
+   if rmode<>3 then
+    process_glb(rootbn,"doc.title","title",glbann,true)
+    process_glb(rootbn,"doc.subtitle","subtitle",glbann,true)
+    process_glb(rootbn,"doc.name","name",glbann)
+    process_glb(rootbn,"doc.version","version",glbann)
+    process_glb(rootbn,"doc.date","date",glbann)
+   end-if
+
+   havesecs:=createlocs(sections,relocs,rootbn,glbann)
+   
+   parset:=findparams(m,sa)
+   sa-=parset
+   typset:=findtypes(m,sa)
+   sa-=typset
+   fctset:=findfcts(m,sa,fctreqset)
+   sa-=fctset
+   sa-=fctreqset
+   cstset:=findcsts(m,sa)
+   forall(v in sa-cstset|not ignored(m,v))
+    if isreqmt(m,v) then
+     varreqset+={v}
+    else
+     varset+={v}
+    end-if    
+
+   if havesecs then
+    getannotations(m,"","doc._pps.",parg)
+    while(parg.size>0) do
+     ndx:=substr(getfirst(parg),10,100)
+     cuthead(parg,1)
+     val:=getfirst(parg)
+     cuthead(parg,1)
+     sections(ndx).pp:=storeparag(val,sections(ndx).pp,XML_NEXT,"p","pre")
+    end-do
+   end-if
+
+   process_cparams(m,sections,relocs,if(havesecs,"","0ctrls"))
+
+   if parset.size>0 then
+    l:=list(parset)
+    qsort(SYS_UP,l)
+    forall(p in l)
+     process_param(m,sections,relocs,if(havesecs,"","0params"),p)
+   end-if
+
+   if varreqset.size>0 then
+    l:=list(varreqset)
+    qsort(SYS_UP,l)
+    forall(p in l)
+     process_varreq(m,sections,relocs,if(havesecs,"","0reqs"),p)
+   end-if
+
+   if fctreqset.size>0 then
+    l:=list(fctreqset)
+    qsort(SYS_UP,l)
+    forall(p in l)
+     process_fctreq(m,sections,relocs,if(havesecs,"","0reqs"),p)
+   end-if
+
+   if cstset.size>0 then
+    l:=list(cstset)
+    qsort(SYS_UP,l)
+    forall(c in l)
+     process_const(m,sections,relocs,if(havesecs,"","1consts"),c)
+   end-if
+
+   if typset.size>0 then
+    l:=list(typset)
+    qsort(SYS_UP,l)
+    forall(c in l)
+     process_typdef(m,sections,relocs,if(havesecs,"","2types"),c)
+   end-if
+
+   if varset.size>0 then
+    l:=list(varset)
+    qsort(SYS_UP,l)
+    forall(c in l)
+     process_var(m,sections,relocs,if(havesecs,"","3vars"),c)
+   end-if
+
+   if fctset.size>0 then
+    l:=list(fctset)
+    qsort(SYS_UP,l)
+    forall(c in l)
+     process_fct(m,sections,relocs,if(havesecs,"","4fcts"),c)
+   end-if
+
+   process_annots(m,sections,relocs,if(havesecs,"","5anns"))
+
+   if not havesecs then
+    sn:=0
+    forall(s in locs| s<>"") do
+     if sections(s).pn=0 and sections(s).cn=0 and sections(s).tn=0 and
+        sections(s).vn=0 and sections(s).fn=0 and sections(s).pp=0 then
+      delnode(xd, sections(s).bn)
+     else
+      sn+=1
+      setattr(xd,sections(s).bn,"id","chp-"+textfmt(sn,3,1,10))
+     end-if
+    end-do
+   end-if
+
+   forall(s in locs)
+    if sections(s).fn<>0 then
+     if sections(s).vn>0 then
+      p:=sections(s).vn
+     elif sections(s).tn>0 then
+      p:=sections(s).tn
+     elif sections(s).cn>0 then
+      p:=sections(s).cn
+     elif sections(s).pn>0 then
+      p:=sections(s).pn
+     elif sections(s).pp>0 then
+      p:=sections(s).pp
+     else
+      p:=getnode(xd,sections(s).bn,"title")
+     end-if
+     if p<1 then
+      p:=addnode(xd,sections(s).bn,XML_FIRSTCHILD,XML_ELT,"fctList")
+     else
+      p:=addnode(xd,p,XML_NEXT,XML_ELT,"fctList")
+     end-if
+    end-if
+
+   process_inc(m,sections)
+
+   writeln_("+ Creating `",outfile,"' from `",fname,"'")
+   setindentmode(xd,XML_MANUAL)
+   reindent(xd,rootbn,0)
+   if rmode=3 then
+    save(xd,comnode,outfile)
+    n:=getfirstchild(xd,rootbn)
+    while(n>0) do
+     save(xd,n,"tmp:partxml")
+     fcopy("tmp:partxml",0,outfile,F_APPEND)
+     fdelete("tmp:partxml")
+     n:=getnext(xd,n)
+    end-do
+   else
+    save(xd,outfile)
+   end-if
+   returned:=true
+  else
+   if ready_for_gen then
+    writeln_("+ File `",fname,"' does not contain any `doc.' annotation. Ignored.")
+   end-if
+  end-if
+  reset(xd)
+  unload(m)
+ end-if
+end-function
+
+!********************************
+!* Re-indent the XML document
+!********************************
+procedure reindent(xd:xmldoc,n:integer,spc:integer)
+ declarations
+  noindent={"fctFurtherinfo","fctFurtherinfoItem","fctExampleText","title","entDescr","fctDescr","p"}
+  l:list of integer
+ end-declarations
+
+ sethspace(xd,n,spc)
+ setvspace(xd,n,1)
+ if getname(xd,n) not in noindent then
+  getnodes(xd,n,"node()",l)
+  forall(nn in l|gettype(xd,nn)=XML_ELT)
+   reindent(xd,nn,spc+1)
+ end-if
+end-procedure
+
+!*******************************
+!* Create the 'sections' table
+!*******************************
+function createlocs(sections:array(locs:set of string) of Location,relocs:array(alocs:set of string) of string,bn:integer,glbann:array(glbs:set of string) of string):boolean
+ locs:={""}
+ forall(i in glbs)
+  if copytext(i,1,9)="doc._chs." then
+   locs+={substr(i,10,i.size)}
+  elif copytext(i,1,9)="doc._ses." then
+   locs+={substr(i,10,i.size)}
+  elif copytext(i,1,9)="doc._sus." then
+   locs+={substr(i,10,i.size)}
+  elif copytext(i,1,9)="doc._tls." then
+   alocs+=split_tloc(glbann(i))
+  end-if
+ if locs.size>1 then
+  finalise(locs)
+  finalise(alocs)
+  sections("").bn:=bn
+  forall(i in glbs)
+   if copytext(i,1,9)="doc._chs." then
+    ndx:=substr(i,10,i.size)
+    sections(ndx).bn:=addnode(xd,bn,XML_ELT,"chapter")
+    sections(ndx).pp:=addnode(xd,sections(ndx).bn,XML_ELT,"title")
+    if "doc._sts."+ndx in glbs then
+     setattr(xd,sections(ndx).pp,"cont",glbann("doc._sts."+ndx))
+    end-if
+    text2xml(glbann(i),sections(ndx).pp)
+    id:="doc._ids."+ndx
+    if id in glbs and glbann(id)<>"" then
+     setattr(xd,sections(ndx).bn,"id",glbann(id))
+    else
+     setattr(xd,sections(ndx).bn,"id",text("chp-")+fixxmlid(copytext(i,10,i.size)))
+    end-if
+   elif copytext(i,1,9)="doc._ses." then
+    ndx:=substr(i,10,i.size)
+    ndxsec:=substr(ndx,1,ndx.size-4)
+    sections(ndx).bn:=addnode(xd,sections(ndxsec).bn,XML_ELT,"section")
+    sections(ndx).pp:=addnode(xd,sections(ndx).bn,XML_ELT,"title")
+    if "doc._sts."+ndx in glbs then
+     setattr(xd,sections(ndx).pp,"cont",glbann("doc._sts."+ndx))
+    end-if
+    text2xml(glbann(i),sections(ndx).pp)
+    id:="doc._ids."+ndx
+    if id in glbs and glbann(id)<>"" then
+     setattr(xd,sections(ndx).bn,"id",glbann(id))
+    else
+     setattr(xd,sections(ndx).bn,"id",text("sec-")+fixxmlid(copytext(i,10,i.size)))
+    end-if
+   elif copytext(i,1,9)="doc._sus." then
+    ndx:=substr(i,10,i.size)
+    ndxsec:=substr(ndx,1,ndx.size-4)
+    sections(ndx).bn:=addnode(xd,sections(ndxsec).bn,XML_ELT,"subsection")
+    sections(ndx).pp:=addnode(xd,sections(ndx).bn,XML_ELT,"title")
+    if "doc._sts."+ndx in glbs then
+     setattr(xd,sections(ndx).pp,"cont",glbann("doc._sts."+ndx))
+    end-if
+    text2xml(glbann(i),sections(ndx).pp)
+    id:="doc._ids."+ndx
+    if id in glbs and glbann(id)<>"" then
+     setattr(xd,sections(ndx).bn,"id",glbann(id))
+    else
+     setattr(xd,sections(ndx).bn,"id",text("sub-")+fixxmlid(copytext(i,10,i.size)))
+    end-if
+   elif copytext(i,1,9)="doc._tls." then
+    ndx:=substr(i,10,i.size)
+    forall(l in split_tloc(glbann(i)))
+     relocs(l):=ndx
+   end-if
+   returned:=true
+  else
+   locs+={"0ctrls","0params","0reqs","1consts","2types","3vars","4fcts","5anns"}
+   finalise(locs)
+   sections("").bn:=bn
+   sections("0ctrls").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("0ctrls").bn,XML_ELT,"title","Control parameters")
+   sections("0params").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("0params").bn,XML_ELT,"title","Runtime parameters")
+   sections("0reqs").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("0reqs").bn,XML_ELT,"title","Requirements")
+   sections("1consts").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("1consts").bn,XML_ELT,"title","Constants")
+   sections("2types").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("2types").bn,XML_ELT,"title","Types")
+   sections("3vars").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("3vars").bn,XML_ELT,"title","Variables")
+   sections("4fcts").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("4fcts").bn,XML_ELT,"title","Subroutines")
+   sections("5anns").bn:=addnode(xd,bn,XML_ELT,"chapter")
+   n:=addnode(xd,sections("5anns").bn,XML_ELT,"title","Annotations")
+   returned:=false
+  end-if
+end-function
+
+!*******************************
+!* Process inclusions
+!*******************************
+procedure process_inc(m:Model,sections:array(locs:set of string) of Location)
+ declarations
+  lsi:list of string
+  loc:string
+ end-declarations
+
+ getannotations(m,"","doc._inc.",lsi)
+ forall(i in lsi,cnt as counter)
+  if cnt mod 2 =0 then
+   include_xml(i,loc,sections)
+  else
+   loc:=string(copytext(i,10,i.size))
+  end-if
+end-procedure
+
+!*****************************
+!* Handle global definitions
+!*****************************
+procedure process_glb(bn:integer,ann:string,elt:string,glbann:array(glbs:set of string) of string,txthtml:boolean)
+ if ann in glbs then
+  if txthtml then
+   n:=addnode(xd,bn,XML_ELT,elt)
+   text2xml(glbann(ann),n)
+  else
+   n:=addnode(xd,bn,XML_ELT,elt,glbann(ann))
+  end-if
+ end-if
+end-procedure
+
+procedure process_glb(bn:integer,ann:string,elt:string,glbann:array(glbs:set of string) of string)
+ process_glb(bn,ann,elt,glbann,false)
+end-procedure
+
+!*************************************
+!* Check whether a symbol is ignored
+!*************************************
+function ignored(m:Model,symb:string):boolean
+ declarations
+  l:list of string
+ end-declarations
+ getannotations(m,symb,"doc.ignore",l)
+ if l.size>0 then
+  returned:=getlast(l)="true"
+ end-if
+end-function
+
+!*****************************************************
+!* Check whether a symbol is defined as requirement
+!*****************************************************
+function isreqmt(m:Model,symb:string):boolean
+ declarations
+  l:list of string
+ end-declarations
+ getannotations(m,symb,"doc.reqmt",l)
+ if l.size>0 then
+  returned:=getlast(l)="true"
+ end-if
+end-function
+
+!**********************
+!* Find parameters
+!**********************
+function findparams(m:Model,s:set of string):set of string
+ declarations
+  l:list of string
+ end-declarations
+ forall(p in s) do
+  getannotations(m,p,"doc.default",l)
+  if l.size>0 and not ignored(m,p) then
+   returned+={p}
+  end-if
+ end-do
+end-function
+
+!**********************
+!* Find types
+!**********************
+function findtypes(m:Model,s:set of string):set of string
+ declarations
+  l:list of string
+ end-declarations
+ forall(p in s) do
+  getannotations(m,p,"doc.typedef",l)
+  if l.size>0 and not ignored(m,p) then
+   returned+={p}
+  end-if
+ end-do
+end-function
+
+!**********************
+!* Find functions
+!**********************
+function findfcts(m:Model,s:set of string,rs:set of string):set of string
+ declarations
+  l:list of string
+ end-declarations
+ forall(p in s) do
+  getannotations(m,p,"doc.syntax",l)
+  if l.size>0 and not ignored(m,p) then
+   if isreqmt(m,p) then
+    rs+={p}
+   else
+    returned+={p}
+   end-if
+  end-if
+ end-do
+end-function
+
+!**********************
+!* Find constants
+!**********************
+function findcsts(m:Model,s:set of string):set of string
+ declarations
+  l:list of string
+ end-declarations
+ forall(p in s) do
+  getannotations(m,p,"doc.const",l)
+  if l.size>0 and not ignored(m,p) then
+   returned+={p}
+  end-if
+ end-do
+end-function
+
+!***********************
+!* Process a parameter
+!***********************
+procedure process_param(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,par:string)
+ declarations
+  l:list of string
+  p,pv:integer
+ end-declarations
+
+ getannotations(m,par,"doc.",l)
+ if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+ if sections(ndx).pn=0 then
+  p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+ else
+  p:=addnode(xd,sections(ndx).pn,XML_NEXT,XML_ELT,"entity")
+ end-if
+ sections(ndx).pn:=p
+ setsafeentname(p,par)
+ setattr(xd,p,"cat","param")
+ while (l.size>0) do
+  ann:=getfirst(l)
+  cuthead(l,1)
+  val:=getfirst(l)
+  cuthead(l,1)
+  if val<>"" or ann="doc.deprecated" then
+   case ann of
+    "doc.type":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entType",val)
+	 if val="string" then
+	  quoteconst(p,"entDefault")
+	 end-if
+	end-do
+    "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+    "doc.deprecated":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDeprecated")
+	 text2xml(val,nid)
+	 setattr(xd,p,"deprecated","deprecated")
+	end-do
+    "doc.default":
+	nid:=addnode(xd,p,XML_ELT,"entDefault",val)
+    "doc.info":
+	add_entries(p,"entNote","entNoteItem",val)
+    "doc.related":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entRelated")
+	 text2xml(val,nid)
+	end-do
+    "doc.value":
+	do
+	 if pv<1 then
+	  pv:=addnode(xd,p,XML_ELT,"entValues")
+	 end-if
+	 add_fctpar(pv,"entVal","value",val)
+	end-do
+   end-case
+  end-if
+ end-do
+end-procedure
+
+!***********************
+!* Process a constant
+!***********************
+procedure process_const(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,cst:string)
+ declarations
+  l:list of string
+  p:integer
+ end-declarations
+
+ getannotations(m,cst,"doc.",l)
+ if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+ if sections(ndx).cn=0 then
+  p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+ else
+  p:=addnode(xd,sections(ndx).cn,XML_NEXT,XML_ELT,"entity")
+ end-if
+ sections(ndx).cn:=p
+ setsafeentname(p,cst)
+ setattr(xd,p,"cat","constant")
+ while (l.size>0) do
+  ann:=getfirst(l)
+  cuthead(l,1)
+  val:=getfirst(l)
+  cuthead(l,1)
+  if val<>"" then
+   case ann of
+    "doc.type":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entType",val)
+	 if val="string" then
+	  quoteconst(p,"entConst")
+	 end-if
+	end-do
+    "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+    "doc.const":
+	nid:=addnode(xd,p,XML_ELT,"entConst",val)
+    "doc.info":
+	add_entries(p,"entNote","entNoteItem",val)
+    "doc.related":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entRelated")
+	 text2xml(val,nid)
+	end-do
+   end-case
+  end-if
+ end-do
+end-procedure
+
+!*****************************
+!* Process a type definition
+!*****************************
+procedure process_typdef(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,typ:string)
+ declarations
+  l:list of string
+  p:integer
+  fields:set of string
+  ftyp,fdesc:array(fields) of string
+  fvals:dynamic array(fields,vals:set of string) of string
+ end-declarations
+
+ getannotations(m,typ,"doc.",l)
+ if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+ if sections(ndx).cn=0 then
+  p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+ else
+  p:=addnode(xd,sections(ndx).cn,XML_NEXT,XML_ELT,"entity")
+ end-if
+ sections(ndx).cn:=p
+ setsafeentname(p,typ)
+ setattr(xd,p,"cat","type")
+ while (l.size>0) do
+  ann:=getfirst(l)
+  cuthead(l,1)
+  val:=getfirst(l)
+  cuthead(l,1)
+  if val<>"" or ann="doc.deprecated" then
+   case ann of
+    "doc.typedef":
+	nid:=addnode(xd,p,XML_ELT,"entType",val)
+    "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+    "doc.deprecated":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDeprecated")
+	 text2xml(val,nid)
+	 setattr(xd,p,"deprecated","deprecated")
+	end-do
+    "doc.info":
+	add_entries(p,"entNote","entNoteItem",val)
+    "doc.recfldtype":
+    	add_field(ftyp,val)
+    "doc.recflddescr":
+    	add_field(fdesc,val)
+    "doc.recfldval":
+    	add_fieldval(fvals,val)
+    "doc.related":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entRelated")
+	 text2xml(val,nid)
+	end-do
+   end-case
+  end-if
+ end-do
+ if fields.size>0 then
+  forall(f in fields) do
+   nid:=addnode(xd,p,XML_ELT,"entField")
+   setattr(xd,nid,"name",f)
+   n2:=addnode(xd,nid,XML_ELT,"entType",ftyp(f))
+   if fdesc(f)<>"" then
+    n2:=addnode(xd,nid,XML_ELT,"entDescr")
+    text2xml(fdesc(f),n2)
+   end-if
+   if or(v in vals | exists(fvals(f,v))) true then
+    n2:=addnode(xd,nid,XML_ELT,"entValues")
+    forall(v in vals | exists(fvals(f,v))) do
+     n3:=addnode(xd,n2,XML_ELT,"entVal")
+     setattr(xd,n3,"value",v)
+     text2xml(fvals(f,v),n3)
+    end-do
+   end-if
+  end-do
+ end-if
+end-procedure
+
+!***********************
+!* Process a variable
+!***********************
+procedure process_var(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,v:string)
+ declarations
+  l:list of string
+  p,pv:integer
+  fields:set of string
+  ftyp,fdesc:array(fields) of string
+ end-declarations
+
+ getannotations(m,v,"doc.",l)
+ if l.size>0 then
+  if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+  if sections(ndx).vn=0 then
+   p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+  else
+   p:=addnode(xd,sections(ndx).vn,XML_NEXT,XML_ELT,"entity")
+  end-if
+  sections(ndx).vn:=p
+  setsafeentname(p,v)
+  setattr(xd,p,"cat","variable")
+  while (l.size>0) do
+   ann:=getfirst(l)
+   cuthead(l,1)
+   val:=getfirst(l)
+   cuthead(l,1)
+   if val<>"" or ann="doc.deprecated" then
+    case ann of
+     "doc.type":
+	nid:=addnode(xd,p,XML_ELT,"entType",val)
+     "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+    "doc.deprecated":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDeprecated")
+	 text2xml(val,nid)
+	 setattr(xd,p,"deprecated","deprecated")
+	end-do
+     "doc.info":
+	add_entries(p,"entNote","entNoteItem",val)
+     "doc.recfldtype":
+    	add_field(ftyp,val)
+     "doc.recflddescr":
+    	add_field(fdesc,val)
+     "doc.setby":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entSetby")
+	 text2xml(val,nid)
+	end-do
+     "doc.value":
+	do
+	 if pv<1 then
+	  pv:=addnode(xd,p,XML_ELT,"entValues")
+	 end-if
+	 add_fctpar(pv,"entVal","value",val)
+	end-do
+     "doc.related":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entRelated")
+	 text2xml(val,nid)
+	end-do
+    end-case
+   end-if
+  end-do
+  if fields.size>0 then
+   forall(f in fields) do
+    nid:=addnode(xd,p,XML_ELT,"entField")
+    setattr(xd,nid,"name",f)
+    n2:=addnode(xd,nid,XML_ELT,"entType",ftyp(f))
+    if fdesc(f)<>"" then
+     n2:=addnode(xd,nid,XML_ELT,"entDescr")
+     text2xml(fdesc(f),n2)
+    end-if
+   end-do
+  end-if
+ end-if
+end-procedure
+
+!************************************
+!* Process a variable as requirement
+!************************************
+procedure process_varreq(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,v:string)
+ declarations
+  l:list of string
+  p,pv:integer
+ end-declarations
+
+ getannotations(m,v,"doc.",l)
+ if l.size>0 then
+  if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+  if sections(ndx).vn=0 then
+   p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+  else
+   p:=addnode(xd,sections(ndx).vn,XML_NEXT,XML_ELT,"entity")
+  end-if
+  sections(ndx).vn:=p
+  setsafeentname(p,v)
+  setattr(xd,p,"cat","variable")
+  while (l.size>0) do
+   ann:=getfirst(l)
+   cuthead(l,1)
+   val:=getfirst(l)
+   cuthead(l,1)
+   if val<>"" then
+    case ann of
+     "doc.type":
+	nid:=addnode(xd,p,XML_ELT,"entType",val)
+     "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+     "doc.info":
+	add_entries(p,"entNote","entNoteItem",val)
+     "doc.value":
+	do
+	 if pv<1 then
+	  pv:=addnode(xd,p,XML_ELT,"entValues")
+	 end-if
+	 add_fctpar(pv,"entVal","value",val)
+	end-do
+     "doc.related":
+	do
+	 nid:=addnode(xd,p,XML_ELT,"entRelated")
+	 text2xml(val,nid)
+	end-do
+    end-case
+   end-if
+  end-do
+ end-if
+end-procedure
+
+!***********************
+!* Process a function
+!***********************
+procedure process_fct(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,fct:string)
+ declarations
+  l,lg:list of string
+  p,per,pe,ee:integer
+  group:string
+ end-declarations
+
+ getannotations(m,fct,"doc.",l)
+ if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+ if sections(ndx).fn=0 then
+  p:=addnode(xd,sections(ndx).bn,XML_ELT,"fct")
+  getannotations(m,fct,"doc.group",lg)
+  if lg.size=2 and getfirst(lg)="doc.group" then
+    writeln_("Cannot group `",fct,"' with `",getlast(lg),"' (name not found)")
+  end-if
+ else
+  getannotations(m,fct,"doc.group",lg)
+  if lg.size=2 and getfirst(lg)="doc.group" then
+   group:=getlast(lg)
+   p:=getnode(xd,sections(ndx).bn,"fct[@name='"+group+"']")
+   if p>0 then
+    if getattr(xd,p,"name2")="" then
+     setattr(xd,p,"name2",fct)
+    elif getattr(xd,p,"name3")="" then
+     setattr(xd,p,"name3",fct)
+    elif getattr(xd,p,"name4")="" then
+     setattr(xd,p,"name4",fct)
+    end-if
+   else
+    writeln_("Cannot group `",fct,"' with `",group,"' (name not found)")
+    p:=addnode(xd,sections(ndx).fn,XML_NEXT,XML_ELT,"fct")
+    group:=""
+   end-if
+  else
+   p:=addnode(xd,sections(ndx).fn,XML_NEXT,XML_ELT,"fct")
+  end-if
+ end-if
+ if group="" then
+  sections(ndx).fn:=p
+  setsafeentname(p,fct)
+ end-if
+ while (l.size>0) do
+  ann:=getfirst(l)
+  cuthead(l,1)
+  val:=getfirst(l)
+  cuthead(l,1)
+  if val<>"" or ann="doc.deprecated" then
+   case ann of
+    "doc.descr":
+	if group="" then
+	 nid:=addnode(xd,p,XML_FIRSTCHILD,XML_ELT,"fctDescr")
+	 text2xml(val,nid)
+	end-if
+    "doc.shortdescr":
+	setattr(xd,p,"descr",val)
+    "doc.deprecated":
+	if group="" then
+	 nid:=addnode(xd,p,XML_FIRSTCHILD,XML_ELT,"fctDeprecated")
+	 text2xml(val,nid)
+	 setattr(xd,p,"deprecated","deprecated")
+	end-if
+    "doc.syntax":
+	 add_entries(p,["fctDescr"],"fctSyntax","fctSyntaxItem",val)
+    "doc.param":
+	do
+	 if pe<1 then
+	  pe:=addafter(p,"fctArguments",["fctSyntax","fctDescr"])
+	 end-if
+	 add_fctpar(pe,"fctArg","name",val)
+	end-do
+    "doc.paramval":
+	 add_fctparval(pe,val)
+    "doc.err":
+	do
+	 if per<1 then
+	  per:=addafter(p,"fctErrors",["fctArguments","fctSyntax","fctDescr"])
+	 end-if
+	 add_fctpar(per,"fctErr","num",val)
+	end-do
+    "doc.return":
+	if group="" then
+	 nid:=addafter(p,"fctReturn",["fctErrors","fctArguments","fctSyntax","fctDescr"])
+	 text2xml(val,nid)
+!	 setvalue(xd,nid,val)
+	end-if
+    "doc.related":
+	if group="" then
+	 nid:=addafter(p,"fctRelated",["fctFurtherinfo","fctExample","fctReturn","fctErrors","fctArguments","fctSyntax","fctDescr"])
+	 text2xml(val,nid)
+	end-if
+    "doc.info":
+	add_entries(p,["fctExample","fctReturn","fctErrors","fctArguments","fctSyntax","fctDescr"],"fctFurtherinfo","fctFurtherinfoItem",val)
+    "doc.example":
+	do
+	 if ee<1 then
+	  ee:=addafter(p,"fctExample",["fctReturn","fctErrors","fctArguments","fctSyntax","fctDescr"])
+	 end-if
+         nid:=storeparag(val,ee,XML_LASTCHILD,"fctExampleText","fctExampleCode")
+(!
+	 if copytext(ann,1,18)="doc.example.source" then
+	  nid:=addnode(xd,ee,XML_ELT,"fctExampleCode")
+	  nid:=addnode(xd,nid,XML_CDATA,val)
+	 elif copytext(ann,1,17)="doc.example.descr" then
+	  nid:=addnode(xd,ee,XML_ELT,"fctExampleText")
+	  text2xml(val,nid)
+	 end-if
+!)
+	end-do
+   end-case
+  end-if
+ end-do
+end-procedure
+
+!************************************
+!* Process a function as requirement
+!************************************
+procedure process_fctreq(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string,fct:string)
+ declarations
+  l:list of string
+  p,pe:integer
+ end-declarations
+
+ getannotations(m,fct,"doc.",l)
+ if ndx="" then ndx:=getindex(l,locs,relocs); end-if
+ if sections(ndx).vn=0 then
+  p:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+ else
+  p:=addnode(xd,sections(ndx).vn,XML_NEXT,XML_ELT,"entity")
+ end-if
+ sections(ndx).vn:=p
+ setsafeentname(p,fct)
+ setattr(xd,p,"cat","fctreq")
+ while (l.size>0) do
+  ann:=getfirst(l)
+  cuthead(l,1)
+  val:=getfirst(l)
+  cuthead(l,1)
+  if val<>"" then
+   case ann of
+    "doc.descr":
+	do
+	 nid:=addnode(xd,p,XML_FIRSTCHILD,XML_ELT,"entDescr")
+	 text2xml(val,nid)
+	end-do
+    "doc.shortdescr":
+	setattr(xd,p,"descr",val)
+    "doc.syntax":
+	 add_entries(p,["entDescr"],"entSyntax","entSyntaxItem",val)
+    "doc.param":
+	do
+	 if pe<1 then
+	  pe:=addafter(p,"entArguments",["entSyntax","entDescr"])
+	 end-if
+	 add_fctpar(pe,"entArg","name",val)
+	end-do
+    "doc.paramval":
+	 add_fctparval(pe,val)
+    "doc.return":
+	do
+	 nid:=addafter(p,"entReturn",["entArguments","entSyntax","entDescr"])
+	 text2xml(val,nid)
+!	 setvalue(xd,nid,val)
+	end-do
+    "doc.related":
+	do
+	 nid:=addafter(p,"entRelated",["entNote","entReturn","entArguments","entSyntax","entDescr"])
+	 text2xml(val,nid)
+	end-do
+    "doc.info":
+	add_entries(p,["entReturn","entArguments","entSyntax","entDescr"],"entNote","entNoteItem",val)
+   end-case
+  end-if
+ end-do
+end-procedure
+
+!**************************
+!* Process annotations
+!**************************
+procedure process_annots(annotMod:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string)
+ declarations
+   AnnList: list of string             !@descr Annotation values  
+   aname,atype,aval: text              !@descr Annotation definition 
+   atext: text
+   pctx,actx: parsectx
+   anode, n, avalues, parnode: integer
+   NList: list of integer
+   rep:integer
+   parname,dummy: text
+   parlist: list of text
+ end-declarations
+
+ getannotations(annotMod,"","doc.annotloc",AnnList)
+ if ndx="" and AnnList.size=2 then
+  ndx:=getindex(["doc.loc",getlast(AnnList)],locs,relocs)
+ end-if
+ if ndx="" then
+  forall(ll in locs)
+   ndx:=ll
+ end-if
+
+ ! Get all global annotations "doc.annot." to decide which annotations are to be documented:
+ AnnList:=[]
+ getannotations(annotMod, "", "doc.annotcat", AnnList)
+ pctx.sepchar:=32
+ pctx.qtype:=-1              ! no quotes
+ if AnnList.size>0 then
+  forall(i in AnnList | not startswith(i,"doc.annotcat")) do
+   atext:=i
+   rep:=regreplace(atext,"\n"," ")
+   pctx.endparse:=0
+   while(nextfield(atext,pctx))
+    AnnDoc+={string(parsetext(atext,pctx))}
+  end-do
+  if AnnDoc.size=0 then
+   AnnDoc:={''}
+  end-if
+ end-if
+
+ ! Get all global annotations "mc.def" defined in a package:
+ getannotations(annotMod, "", "mc.def", AnnList)
+ pctx.sepchar:=32
+ pctx.qtype:=-1
+ actx.sepchar:=46
+ actx.qtype:=-1
+ forall(a in AnnList | a<>"mc.def") do   
+   atext:=text(a)
+   pctx.endparse:=1
+   aname:=parsetext(atext,pctx)
+   if AnnDoc.size=0 or startswith(aname,AnnDoc) then    ! Only document selected categories
+     res:=nextfield(atext,pctx)
+     atype:=parsetext(atext,pctx)
+     if nextfield(atext,pctx) then
+       aval:=copytext(atext,pctx.endparse,atext.size)
+     else
+       aval:=""
+     end-if
+     if sections(ndx).vn=0 then
+      anode:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+     else
+      anode:=addnode(xd,sections(ndx).vn,XML_NEXT,XML_ELT,"entity")
+     end-if
+     sections(ndx).vn:=anode
+     if getchar(aname,aname.size)=46 then        ! Remove trailing "."
+       deltext(aname,aname.size,aname.size)
+     end-if
+     setattr(xd, anode, "name", aname)
+     setattr(xd, anode, "cat", "annot")
+
+     forall(c in 1..atype.size) do
+       case getchar(atype,c) of
+       !"T"
+       84 : case getchar(atype,c+1)-48 of
+          2: n:=addnode(xd, anode, XML_ELT, "entType", "text")
+          3: n:=addnode(xd, anode, XML_ELT, "entType", "integer")
+          4: n:=addnode(xd, anode, XML_ELT, "entType", "real")
+          5: n:=addnode(xd, anode, XML_ELT, "entType", "boolean")
+          6: n:=addnode(xd, anode, XML_ELT, "entType", "alias")
+         end-case
+       !"P"
+       80 : case getchar(atype,c+1)-48 of
+          0: n:=addnode(xd, anode, XML_ELT, "entPolicy", "last")
+          1: n:=addnode(xd, anode, XML_ELT, "entPolicy", "first")
+          2: n:=addnode(xd, anode, XML_ELT, "entPolicy", "merge")
+          3: n:=addnode(xd, anode, XML_ELT, "entPolicy", "multi")
+         end-case
+       !"S"
+       83: case getchar(atype,c+1)-48 of
+          0: n:=addnode(xd, anode, XML_ELT, "entScope", "any")
+          1: n:=addnode(xd, anode, XML_ELT, "entScope", "specific")
+          2: n:=addnode(xd, anode, XML_ELT, "entScope", "global")
+         end-case
+       !"D"
+       68: case getchar(atype,c+1)-48 of
+          1: do 
+              avalues:=addnode(xd, anode, XML_ELT, "entValues")
+              addvalues(aval, avalues)
+            end-do
+          2:  do 
+              avalues:=addnode(xd, anode, XML_ELT, "entValues")
+              addbounds(aval, avalues)
+            end-do
+         end-case
+       end-case
+     end-do
+   end-if   ! aname in AnnDoc 
+ end-do
+
+(! Annotation type codes:
+T - type: 2 text 3 integer 4 real 5 boolean 6 alias
+P - policy: 0 last 1 first 2 merge 3 multi
+S - scope: 0 any 1 specific 2 global
+D - domain: 0 no constraints 1 list of values 2 range
+followed by list of values or range bounds if D1 or D2
+!)
+
+ ! Complete annotation documentation with other doc.annot* information
+ getannotations(annotMod, "", "doc.annot.", AnnList)
+ lasta:=""
+ forall(a in AnnList) do
+   if not startswith(a,"doc.annot.") then  
+     atext:=text(a)
+     pctx.endparse:=1
+     aname:=parsetext(atext,pctx)
+     if AnnDoc.size=0 or startswith(aname,AnnDoc) then    ! Only document selected categories
+       anode:=getnode(xd, "//entity[@name='"+aname+"']")
+
+       if anode<1 and keepundefannot then
+         dummy:=pathsplit(SYS_EXTN,aname,parname)     ! Move up one category
+         parnode:=0
+         while (parname<>"" and parname<>"." and parnode<1) do
+           parlist+=[copytext(parname,1,parname.size)]
+           parnode:=getnode(xd, "//entity[@name='"+parname+"']")
+	   if pathsplit(SYS_EXTN,parname,parname)="" then break; end-if
+         end-do
+         if parnode>0 then  ! Create (subtree of) XMLnode(s) for annotation name
+           cuttail(parlist,1)
+           while (parlist<>[]) do
+             parname:=getlast(parlist)
+             cuttail(parlist,1)
+             parnode:=addnode(xd, parnode, XML_NEXT, XML_ELT, "entity")
+             setattr(xd, parnode, "name", parname)
+             setattr(xd, parnode, "cat", "annot")
+           end-do
+           anode:=addnode(xd, parnode, XML_NEXT, XML_ELT, "entity")
+           setattr(xd, anode, "name", aname)
+           setattr(xd, anode, "cat", "annot")
+         end-if
+       end-if
+
+       case string(lasta) of
+         "doc.annot.descr": do
+             if anode>0 then
+               nd:=addnode(xd, anode, XML_ELT, "entDescr")
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.deprecated": do
+             if anode>0 then
+               nd:=addnode(xd, anode, XML_ELT, "entDeprecated")
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+	       setattr(xd,anode,"deprecated","deprecated")
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.type": do
+             if anode>0 then
+               nd:=addnode(xd, anode, XML_ELT, "entType")
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.default": do
+             if anode>0 then
+               nd:=addnode(xd, anode, XML_ELT, "entDefault")
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.value": do
+             if anode>0 then
+	       nd:=getnode(xd, anode, "entValues")
+	       if nd<0 then
+                 nd:=addnode(xd, anode, XML_ELT, "entValues")
+	       end-if	 
+               if nextfield(atext,pctx) then
+	         aname:=parsetext(atext,pctx)
+	         ndv:=getnode(xd, nd, "entVal[@value='"+aname+"']")
+	         if ndv<0 then
+                   ndv:=addnode(xd, nd, XML_ELT, "entVal")
+		   setattr(xd, ndv, "value", aname)
+	         end-if	 
+                 if nextfield(atext,pctx) then
+	           text2xml(copytext(atext,pctx.endparse,atext.size), ndv)
+                 end-if
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.info": do
+             if anode>0 then
+	       nd:=getnode(xd, anode, "entNote")
+	       if nd<0 then
+                 nd:=addnode(xd, anode, XML_ELT, "entNote")
+	       else
+	         if getnode(xd, nd, "entNoteItem")<0 then
+		   ndv:=addnode(xd, getnode(xd,"*"), XML_ELT, "temp")
+		   ndv:=copynode(xd, nd, xd, ndv, XML_FIRSTCHILD)
+		   setname(xd, ndv, "entNoteItem")
+		   getnodes(xd,nd,"child::node()",NList)		 
+		   forall(j in NList) delnode(xd,j)
+		   res2:=copynode(xd, ndv, xd, nd, XML_FIRSTCHILD)
+                  delnode(xd, ndv)
+		 end-if
+	         nd:=addnode(xd, nd, XML_ELT, "entNoteItem")
+	       end-if	 
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+         "doc.annot.related": do
+             if anode>0 then
+               nd:=addnode(xd, anode, XML_ELT, "entRelated")
+               if nextfield(atext,pctx) then
+	         text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+               end-if
+             else
+               writeln_("Annotation '", aname,"' not found (", lasta, ")")
+             end-if
+           end-do
+       end-case
+     end-if   ! aname in AnnDoc 
+   else  
+     lasta:=a
+   end-if  
+ end-do
+end-procedure
+
+!*****************************
+!* Process control parameters
+!*****************************
+procedure process_cparams(m:Model,sections:array(locs:set of string) of Location,relocs:array(set of string) of string,ndx:string)
+ declarations
+   AnnList: list of string
+   aname: text
+   atext: text
+   pctx: parsectx
+   anode: integer
+   NList: list of integer
+   parms: set of string
+ end-declarations
+
+ getannotations(m,"","doc.cparamloc",AnnList)
+ if ndx="" and AnnList.size=2 then
+  ndx:=getindex(["doc.loc",getlast(AnnList)],locs,relocs)
+ end-if
+ if ndx="" then
+  forall(ll in locs)
+   ndx:=ll
+ end-if
+
+ getannotations(m, "", "doc.cparam.type", AnnList)
+ forall(a in AnnList)
+   if not startswith(a,"doc.cparam.type") then
+     atext:=text(a)
+     asproc(regreplace(atext,"\t"," "))
+     trim(atext)
+     pctx.endparse:=1
+     aname:=parsetext(atext,pctx)
+     if string(aname) not in parms then
+      if sections(ndx).vn=0 then
+       anode:=addnode(xd,sections(ndx).bn,XML_ELT,"entity")
+      else
+       anode:=addnode(xd,sections(ndx).vn,XML_NEXT,XML_ELT,"entity")
+      end-if
+      sections(ndx).vn:=anode
+      setattr(xd, anode, "name", aname)
+      setattr(xd, anode, "cat", "ctrl")
+      nd:=addnode(xd, anode, XML_ELT, "entType")
+      if nextfield(atext,pctx) then
+        text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+      end-if
+      parms+={string(aname)}
+     end-if
+   end-if
+
+ if parms.size>0 then
+   getannotations(m, "", "doc.cparam.", AnnList)
+   lasta:=""
+   forall(a in AnnList) do
+     if not startswith(a,"doc.cparam.") then  
+       atext:=text(a)
+       asproc(regreplace(atext,"\t"," "))
+       trim(atext,SYS_LEFT)
+       pctx.endparse:=1
+       aname:=parsetext(atext,pctx)
+       if string(aname) not in parms then
+         writeln_("Control parameter '", aname,"' not found (", lasta, ")")
+       else
+        anode:=getnode(xd, "//entity[@name='"+aname+"']")
+        case string(lasta) of
+         "doc.cparam.descr": do
+             nd:=addnode(xd, anode, XML_ELT, "entDescr")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+         "doc.cparam.deprecated": do
+             nd:=addnode(xd, anode, XML_ELT, "entDeprecated")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+	     setattr(xd,anode,"deprecated","deprecated")
+           end-do
+         "doc.cparam.default": do
+             nd:=addnode(xd, anode, XML_ELT, "entDefault")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+         "doc.cparam.value": do
+             nd:=getnode(xd, anode, "entValues")
+             if nd<0 then
+               nd:=addnode(xd, anode, XML_ELT, "entValues")
+             end-if	 
+             if nextfield(atext,pctx) then
+               aname:=parsetext(atext,pctx)
+               ndv:=getnode(xd, nd, "entVal[@value='"+aname+"']")
+               if ndv<0 then
+                 ndv:=addnode(xd, nd, XML_ELT, "entVal")
+        	       setattr(xd, ndv, "value", aname)
+               end-if	 
+               if nextfield(atext,pctx) then
+                 text2xml(copytext(atext,pctx.endparse,atext.size), ndv)
+               end-if
+             end-if
+           end-do
+         "doc.cparam.info": do
+             nd:=getnode(xd, anode, "entNote")
+             if nd<0 then
+               nd:=addnode(xd, anode, XML_ELT, "entNote")
+             else
+               if getnode(xd, nd, "entNoteItem")<0 then
+        	       ndv:=addnode(xd, getnode(xd,"*"), XML_ELT, "temp")
+        	       ndv:=copynode(xd, nd, xd, ndv, XML_FIRSTCHILD)
+        	       setname(xd, ndv, "entNoteItem")
+        	       getnodes(xd,nd,"child::node()",NList)		 
+        	       forall(j in NList) delnode(xd,j)
+        	         res2:=copynode(xd, ndv, xd, nd, XML_FIRSTCHILD)
+                 delnode(xd, ndv)
+        	     end-if
+               nd:=addnode(xd, nd, XML_ELT, "entNoteItem")
+             end-if	 
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+         "doc.cparam.affects": do
+             nd:=addnode(xd, anode, XML_ELT, "entAffects")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+         "doc.cparam.setby": do
+             nd:=addnode(xd, anode, XML_ELT, "entSetby")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+         "doc.cparam.related": do
+             nd:=addnode(xd, anode, XML_ELT, "entRelated")
+             if nextfield(atext,pctx) then
+               text2xml(copytext(atext,pctx.endparse,atext.size), nd)
+             end-if
+           end-do
+        end-case
+       end-if
+     else
+       lasta:=a
+     end-if
+   end-do
+ end-if
+end-procedure
+
+!**************************
+!* starts with on a list
+!**************************
+function startswith(t:text,ls:set of string):boolean
+ forall(l in ls)
+  if startswith(t,l) then
+   returned:=true
+   break
+  end-if
+end-function
+
+!**************************
+!* Add values (annotations)
+!**************************
+procedure addvalues(t:text, nd:integer)
+  declarations
+    lpctx:parsectx
+  end-declarations
+
+  lpctx.sepchar:=32            ! ' '
+  lpctx.qtype:=-1              ! no quotes
+  while(nextfield(t,lpctx)) do
+    v:=parsetext(t,lpctx)
+    an:=addnode(xd, nd, XML_ELT, "entVal")
+    setattr(xd, an, "value", v)
+  end-do
+end-procedure
+
+!**************************
+!* Add bounds (annotations)
+!**************************
+procedure addbounds(t:text, nd:integer)
+  declarations
+    lpctx:parsectx
+    v,v2: text
+  end-declarations
+
+  lpctx.sepchar:=32            ! ' '
+  lpctx.qtype:=-1              ! no quotes
+  if (nextfield(t,lpctx)) then
+    v:=parsetext(t,lpctx)
+    if (nextfield(t,lpctx)) then
+      v2:=parsetext(t,lpctx)
+    end-if
+    setvalue(xd, nd, v+if(v2.size>0, ".."+v2, ""))
+  end-if
+end-procedure
+
+
+!**************************
+!* Retrieve location index 
+!**************************
+function getindex(l:list of string,locs:set of string,relocs:array(alocs:set of string) of string):string
+ i:=findfirst(l,"doc.loc")
+ if i=0 then
+  returned:=""
+ else
+  l2:=gettail(l,-i)
+  returned:=getfirst(l2)
+  if returned not in locs then
+   if returned in alocs then
+    returned:=relocs(returned)
+   else
+    writeln_("! Target location `",getfirst(l2),"' not found")
+    returned:=""
+   end-if
+  end-if
+ end-if
+end-function
+
+!*******************************************
+!* Find a blank character in a text string
+!*******************************************
+function findblank(val:text,pos:integer): integer
+ i:=findtext(val," ",pos)
+ i2:=findtext(val,"\t",pos)
+ returned:=minlist(i,i2)
+ if returned<=0 then
+  returned:=maxlist(i,i2)
+ end-if
+end-function
+
+
+!***************************
+!* Add a function argument
+!***************************
+procedure add_fctpar(pe:integer,elt:string,attr:string,val:text)
+ trim(val)
+ i:=findblank(val,1)
+ if i=0 then
+  name:=val
+  val:=""
+ else
+  name:=cuttext(val,1,i-1)
+  trim(val)
+ end-if
+
+ if getnode(xd,pe,elt+"[@name='"+string(name)+"']")<0 then
+  fctp:=addnode(xd,pe,XML_ELT,elt)
+  text2xml(val,fctp)
+  setattr(xd,fctp,attr,name)
+ end-if
+end-procedure
+
+!*********************************
+!* Add a function argument value
+!*********************************
+procedure add_fctparval(pe:integer,val:text)
+ declarations
+  l:list of integer
+ end-declarations
+
+ trim(val)
+ i:=findblank(val,1)
+ if i>1 and pe>1 then
+  name:=cuttext(val,1,i-1)
+  narg:=getnode(xd,pe,"fctArg[@name='"+string(name)+"']")
+  trim(val)
+  j:=findblank(val,1)
+  if j<1 then
+   pval:=val
+   val:=""
+  else
+   pval:=cuttext(val,1,j-1)
+   trim(val)
+  end-if
+ end-if
+ if pe<1 or i<1 or narg<1 then
+  writeln_("Cannot find argument `",name,"' for value `",pval,"' (ignored)")
+ else
+  n:=getfirstchild(xd,narg)
+  if n>1 and getname(xd,n)<>"fctArgVal" and getname(xd,n)<>"fctArgText" then
+   getnodes(xd,narg,l)
+   n2:=addnode(xd,narg,XML_ELT,"fctArgText")
+   forall(nn in l) do
+    asproc(copynode(xd,nn,xd,n2,XML_LASTCHILD))
+    delnode(xd,nn)
+   end-do
+  end-if
+  fctpv:=addnode(xd,narg,XML_ELT,"fctArgVal")
+  text2xml(val,fctpv)
+  setattr(xd,fctpv,"value",pval)
+ end-if
+end-procedure
+
+!****************************************
+!* Add a field descr or type to a record 
+!****************************************
+procedure add_field(fa:array(fld:set of string) of string,val:text)
+ trim(val)
+ i:=findblank(val,1)
+ if i=0 then
+  name:=val
+  val:=""
+ else
+  name:=cuttext(val,1,i-1)
+  trim(val)
+ end-if
+
+ fa(string(name)):=string(val)
+end-procedure
+
+!****************************************
+!* Add a value descr for a record field  
+!****************************************
+procedure add_fieldval(fa:array(fld:set of string,vals:set of string) of string,val:text)
+ trim(val)
+ i:=findblank(val,1)
+ if i<>0 then
+  name:=cuttext(val,1,i-1)
+  trim(val)
+  j:=findblank(val,1)
+  if j=0 then
+   arg:=val
+   val:=""
+  else
+   arg:=cuttext(val,1,j-1)
+   trim(val)
+  end-if
+  fa(string(name),string(arg)):=string(val)
+ end-if
+end-procedure
+
+!******************************
+!* Handle a growing element
+!******************************
+procedure add_entries(nid:integer,nds:list of string,gn:string,subgn:string,val:string)
+ declarations
+  lsd:list of integer
+ end-declarations
+
+ getnodes(xd,nid,gn+"/node()",lsd)
+ if lsd.size>0 then
+  n:=getfirst(lsd)
+  if gettype(xd,n)<>XML_ELT or getname(xd,n)<>subgn then
+   td:=getlast(lsd)
+   n:=addnode(xd,td,XML_NEXT,XML_ELT,subgn)
+   forall(i in lsd) do
+    n2:=copynode(xd,i,xd,n,XML_LASTCHILD)
+    delnode(xd,i)
+   end-do
+  else
+   n:=getlast(lsd)
+  end-if
+  n:=addnode(xd,n,XML_NEXT,XML_ELT,subgn)
+  if gn="fctSyntax" then
+   setvalue(xd,n,val)
+  else
+   text2xml(val,n)
+  end-if
+ else
+  n:=addafter(nid,gn,nds)
+  text2xml(val,n)
+ end-if
+end-procedure
+
+procedure add_entries(nid:integer,gn:string,subgn:string,val:string)
+ add_entries(nid,[],gn,subgn,val)
+end-procedure
+
+!*****************************************
+!* Store a paragraph respecting data type
+!*****************************************
+function storeparag(val:text,nd:integer,w:integer,parg:string,src:string):integer
+ if getchar(val,1)=91 then ! symbol '['
+  tt:=copytext(val,2,5)
+  if tt="TXT]" then
+   deltext(val,1,5)
+   if getchar(val,1)=10 then ! symbol '\n'
+    deltext(val,1,1)
+   end-if
+   returned:=addnode(xd,nd,w,XML_ELT,parg,val)
+  elif tt="SRC]" then
+   deltext(val,1,5)
+   if getchar(val,1)=10 then ! symbol '\n'
+    deltext(val,1,1)
+   end-if
+   returned:=addnode(xd,nd,w,XML_ELT,src)
+   n2:=addnode(xd,returned,XML_CDATA,val)
+  elif tt="XML]" then
+   deltext(val,1,5)
+   if getchar(val,1)=10 then ! symbol '\n'
+    deltext(val,1,1)
+   end-if
+   returned:=addnode(xd,nd,w,XML_ELT,parg)
+   text2xml(val,returned)
+  elif tt="NOD]" then
+   deltext(val,1,5)
+   if getchar(val,1)=10 then ! symbol '\n'
+    deltext(val,1,1)
+   end-if
+   returned:=nd
+   text2xml(val,returned,XML_NEXT)
+  else
+   returned:=addnode(xd,nd,w,XML_ELT,parg)
+   text2xml(val,returned)
+  end-if
+ else
+  returned:=addnode(xd,nd,w,XML_ELT,parg)
+  text2xml(val,returned)
+ end-if
+end-function
+
+!***********************************
+!* Load a text as an XML document
+!***********************************
+procedure text2xml(val:text,nid:integer)
+ text2xml(val,nid,XML_LASTCHILD)
+end-procedure
+
+!*****************************************************
+!* Load a text as an XML document (setting position)
+!*****************************************************
+procedure text2xml(val:text,nid:integer,wh:integer)
+ declarations
+  xt:xmldoc
+  lsd:list of integer
+ end-declarations
+ xmltext:=text("<myroot>")+val+"</myroot>"
+ setparam("ioctrl",true)
+ load(xt,"text:xmltext")
+ setparam("ioctrl",false)
+ if getparam("iostatus")<>0 then
+  writeln_("The following text is not valid XML (",if(exitonerror,_("abort"),_("ignored")),"):\n",val)
+  if exitonerror then
+   exit(1)
+  end-if
+ else
+  getnodes(xt,"/myroot/node()",lsd)
+  forall(i in lsd)
+   n:=copynode(xt,i,xd,nid,wh)
+ end-if
+end-procedure
+
+!***********************************
+!* Load a text as an XML header
+!***********************************
+procedure text2xmlhdr(val:text,nid:integer)
+ declarations
+  xt:xmldoc
+  lsd:list of integer
+ end-declarations
+ xmltext:=text("<?xml version=\"1.0\"?>")+val
+ setparam("ioctrl",true)
+ load(xt,"text:xmltext")
+ setparam("ioctrl",false)
+ if getparam("iostatus")<>0 then
+  writeln_("The following text is not valid XML (",if(exitonerror,_("abort"),_("ignored")),"):\n",val)
+  if exitonerror then
+   exit(1)
+  end-if
+ else
+  getnodes(xt,"node()",lsd)
+  forall(i in lsd)
+   n:=copynode(xt,i,xd,nid,XML_LASTCHILD)
+ end-if
+end-procedure
+
+!*****************************************
+!* Load and insert an external XML file
+!*****************************************
+procedure include_xml(f:text,loc:string,sections:array(locs:set of string) of Location)
+ declarations
+  xt:xmldoc
+  lsd:list of integer
+  fname:text
+  idsize:integer
+ end-declarations
+
+ if getchar(loc,1)<48 or getchar(loc,1)>57 then
+  idsize:=findtext(loc,"_",1)
+ end-if
+
+ fname:=f
+ forall(p in lsip)
+  if bittest(getfstat(p+getdirsep+f),SYS_TYP)=SYS_REG then
+   fname:=p+getdirsep+f
+   break
+  end-if
+ setparam("ioctrl",true)
+ load(xt,fname)
+ setparam("ioctrl",false)
+ if getparam("iostatus")<>0 then
+  writeln_("The XML file '",f,"' could not be loaded (",if(exitonerror,_("abort"),_("ignored")),")\n")
+  if exitonerror then
+   exit(1)
+  end-if
+ elif havenodes(xt,"//chapter",lsd) then  		! Insert chapters
+  if loc.size>idsize+3 then
+   loc:=substr(loc,1,idsize+3)
+  end-if
+  l:=string(copytext(loc,1,idsize)+formattext("%03d",parseint(loc,idsize+1)+1))
+  t:=if(l in locs,sections(l).bn,-1)
+  nd:=if(loc in locs,sections(loc).bn,getnode(xd,"/*/child::*"))
+  while(getnext(xd,nd)<>t) do
+   nd:=getnext(xd,nd)
+  end-do
+  forall(d in lsd)
+   nd:=copynode(xt,d,xd,nd,XML_NEXT)
+ elif havenodes(xt,"//section",lsd) then		 ! Insert sections
+  if loc="000" or substr(loc,1,idsize+3) not in locs then
+   writeln_("The XML file '",f,"' includes a section and target location is not defined (",if(exitonerror,_("abort"),_("ignored")),")\n")
+   if exitonerror then
+    exit(1)
+   else
+    return
+   end-if
+  elif loc.size=idsize+3 then
+   loc+="_000"
+  elif loc.size>idsize+7 then
+   loc:=substr(loc,1,idsize+7)
+  end-if
+  l:=string(copytext(loc,1,3+idsize)+
+            formattext("_%03d",parseint(loc,idsize+5)+1))
+  t:=if(l in locs,sections(l).bn,-1)
+  nd:=if(loc in locs,sections(loc).bn,
+                     getfirstchild(xd,sections(substr(loc,1,idsize+3)).bn))
+  while(getnext(xd,nd)<>t) do
+   nd:=getnext(xd,nd)
+  end-do
+  forall(d in lsd) do
+   nd:=copynode(xt,d,xd,nd,XML_NEXT)
+  end-do
+ else
+  writeln_("The XML file '",f,"' does not contain any chapter or section (",if(exitonerror,_("abort"),_("ignored")),")\n")
+  if exitonerror then
+   exit(1)
+  end-if
+ end-if
+end-procedure
+
+!***************************************
+!* Add quotes to a constant value node 
+!***************************************
+procedure quoteconst(p:integer,n:string)
+ nid:=getnode(xd,p,n)
+ if nid>0 then
+  str:=getvalue(xd,nid)
+  if findtext(str,"'",1)=0 then
+   setvalue(xd,nid,text("'")+str+"'")
+  else
+   setvalue(xd,nid,text('"')+str+'"')
+  end-if
+ end-if
+end-procedure
+
+!*******************************************
+!* Return the last existing node of a list
+!*******************************************
+function addafter(p:integer,name:string,nds:list of string):integer
+ forall(n in nds) do
+  nid:=getnode(xd,p,n)
+  if nid>0 then
+   break
+  end-if
+ end-do
+ if nid<=0 then
+  returned:=addnode(xd,p,XML_ELT,name)
+ else
+  returned:=addnode(xd,nid,XML_NEXT,XML_ELT,name)
+ end-if
+end-function
+
+!****************************************
+!* Split a location definition
+!****************************************
+function split_tloc(tl:text):set of string
+ setparam("sys_sepchar",10)
+ setparam("sys_endparse",0)
+ while(nextfield(tl)) do
+  returned+={string(parsetext(tl))}
+ end-do
+end-function
+
+!************************
+!* replace '_' by '-'
+!************************
+function fixxmlid(id:text):text
+ returned:=id
+ forall(i in 1..id.size)
+  if getchar(returned,i)=95 then
+   setchar(returned,i,45)
+  end-if
+end-function
+
+!*********************************************
+! set entity name and add xname if required
+!*********************************************
+procedure setsafeentname(nid:integer,name:string)
+ declarations
+  nt:text
+ end-declarations
+ setattr(xd,nid,"name",name)
+ i:=findtext(name,"~",1)
+ if i>0 then
+  nt:=name
+  repeat
+   setchar(nt,i,771)
+   i:=findtext(name,"~",i+1)
+  until i=0
+  setattr(xd,nid,"xname",nt)
+ end-if
+end-procedure
+
+!***************************************
+!* Call getnodes and report if sucess
+!***************************************
+function havenodes(x:xmldoc,s:string,lsd:list of integer):boolean
+ getnodes(x,s,lsd)
+ returned:=lsd.size>0
+end-function
+
+!*****************************************************************************
+!*****************************************************************************
+!*
+!*  Generation of an HTML document from an XML file
+!*
+!*****************************************************************************
+!*****************************************************************************
+
+declarations
+ s_hctx=
+   record
+    xt:xmldoc
+    bdir:text
+    chap:text
+    where:integer ! 0:nowhere, 1: chapter 2:section 3:subsection
+    nd:integer
+   end-record
+end-declarations
+
+declarations
+ procedure cpimgs(bdir:text)
+ procedure buildindex(bdir,ndxfile,tocfile,coverfile:text,links:array(string) of text)
+ procedure addtoc_entry(xt:xmldoc,b:integer,cls:integer,ref:text,name:text)
+ procedure addtoc_entry(xt:xmldoc,b:integer,cls:integer,ref:text,node:integer,links:array(string) of text)
+ procedure enumtoc(n:integer,xt:xmldoc,body:integer,cls:integer,chap:text,links:array(string) of text)
+ function sethtmlhead(xt:xmldoc,title:text,ifmath:boolean):integer
+ function sethtmlhead(xt:xmldoc,title:text):integer
+ procedure sethtmlfoot(xt:xmldoc,links:array(string) of text)
+ function starttoc(xt:xmldoc):integer
+ procedure buildtoc(tocfile:text,links:array(string) of text)
+ procedure output_text(n:integer,xt:xmldoc,nd:integer,name:string,cls:string,links:array(string) of text)
+ procedure output_deprec(n:integer,xt:xmldoc,nd:integer,msg:string,links:array(string) of text)
+ procedure output_code(n:integer,xt:xmldoc,nd:integer,name:string,cls:string)
+ procedure output_entity(n:integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ procedure output_fct(bdir:text,n:integer,prev:text,links:array(string) of text)
+ procedure output_fctargval(xt:xmldoc,nv:integer,nd:integer,links:array(string) of text)
+ procedure output_fctlist(lfct:list of integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ procedure output_entlist(lent:list of integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ procedure update_tags(xt:xmldoc,n2:integer,links:array(string) of text)
+ procedure handle_tt(xt:xmldoc,l:list of integer)
+ procedure enumchap(n:integer,hctx:s_hctx,links:array(string) of text)
+ procedure buildchaps(bdir:text,links:array(string) of text)
+end-declarations
+
+!********************************************
+!* Create an html tree for a given document
+!********************************************
+procedure gendochtml(fno:text,repl:boolean,rout:text)
+ declarations
+  fname,extn,bname,outdir:text
+  ids:set of string
+  links:dynamic array(ids) of text
+ end-declarations
+
+ outdir:=rout
+ fname:=fno
+ if findtext(fname,".",1)<1 then
+  if outdir="" then
+   outdir:=fname+"_html"
+  end-if
+  fname+="_doc.xml"
+  extn:="xml"
+ else
+  if copytext(fname,fname.size-7,fname.size)="_doc.xml" then
+   bname:=copytext(fname,1,fname.size-8)
+   extn:="xml"
+  else
+   extn:=pathsplit(SYS_EXTN,fname,bname)
+   if extn="mos" or extn="bim" then
+    fname:=bname+"_doc.xml"
+    extn:="xml"
+   end-if
+  end-if
+  if outdir="" then
+   outdir:=bname+"_html"
+  end-if
+ end-if
+
+ if extn="xml" then 	! we silently skip files with an unkown extension
+  if not repl and getfstat(outdir)<>0 then
+   writeln_("+ Directory `",outdir,"' already exists. Not regenerating it.")
+  else
+   setparam("ioctrl",true)
+    load(xd,fname)
+   setparam("ioctrl",false)
+   if getparam("iostatus")<>0 then
+    writeln_("+ File `",fname,"' cannot be loaded. Ignored.")
+   else
+    makepath(outdir)
+    if bittest(getfstat(outdir),SYS_TYP)<>SYS_DIR then
+     writeln_("+ Directory `",outdir,"' cannot be created. Ignored.")
+    else
+     ready_for_gen:=true
+    end-if
+   end-if
+  end-if
+
+  if ready_for_gen then
+   writeln_("+ Creating `",outdir,"' from `",fname,"'")
+   fcopy(css,outdir+"/moseldoc.css")
+   ifmathj:= getnode(xd,"//mathj")>=0 or getnode(xd,"//dispmathj")>=0 
+   if ifmathj then
+    fcopy(mathjs,outdir+"/load-mathjax.js")
+   end-if
+   cpimgs(outdir)
+   glbcom1:=text("Generated by moseldoc v")+
+   		getparam("model_version")+
+   		" from '"+pathsplit(SYS_FNAME,fname)+"'"
+   glbcom2:=text(datetime(SYS_NOW))
+   glbcom:=text("\n")+glbcom1+"\nCreation date:"+glbcom2+"\n"
+   buildtoc(outdir+"/toc.html",links)
+   buildchaps(outdir,links)
+   buildindex(outdir,"index.html","toc.html","cover.html",links)
+  end-if
+ end-if
+ reset(xd)
+end-procedure
+
+!***************************************
+!* Copy images to the target directory
+!***************************************
+procedure cpimgs(bdir:text)
+ declarations
+  lsimg:list of integer
+  extnlst=['','.png','.jpg']
+  isrc,src,dst:text
+ end-declarations
+ getnodes(xd,"//img",lsimg)
+ if lsimg.size>0 then
+  dst:=bdir+'/Graphic'
+  makepath(dst)
+  forall(n in lsimg) do
+   src:=getattr(xd,n,"src")
+   if src="" then
+    src:=getattr(xd,n,"title")
+    if src<>"": writeln_("Image '",src,"' has no source (ignored)")
+   else
+    isrc:=""
+    forall(e in extnlst)
+     if bittest(getfstat(grdir+'/'+src+e),SYS_TYP)=SYS_REG then
+      isrc:=src+e
+      fcopy(grdir+'/'+isrc,dst)
+      if getsysstat<>0 then
+       writeln_("Failed to copy image '",grdir,'/',isrc,"'")
+       isrc:=""
+      else
+       setattr(xd,n,"src","Graphic/"+isrc)
+      end-if
+      break
+     end-if
+    if isrc="": writeln_("The image file '",src,"' cannot be found (ignored)")
+   end-if
+  end-do
+ end-if
+end-procedure
+
+!******************************
+!* Create the index and cover
+!******************************
+procedure buildindex(bdir,ndxfile,tocfile,coverfile:text,links:array(string) of text)
+ declarations
+  xt:xmldoc
+  title:text
+ end-declarations
+
+ ! Index file
+ n3:=getnode(xd,0,"/*/name")
+ n:=sethtmlhead(xt,if(n3>0,getvalue(xd,n3),text("Mosel Doc")))
+ n:=addnode(xt,n,XML_NEXT,XML_ELT,"frameset")
+ setattr(xt,n,"cols","25%,*")
+ n2:=addnode(xt,n,XML_ELT,"frame")
+ setattr(xt,n2,"src",tocfile)
+ setattr(xt,n2,"name","toc")
+ n2:=addnode(xt,n,XML_ELT,"frame")
+ setattr(xt,n2,"src",coverfile)
+ setattr(xt,n2,"name","main")
+ save(xt,getnode(xt,0,"html"),bdir+"/"+ndxfile)
+ 
+ reset(xt)
+ ! Cover file
+ n:=sethtmlhead(xt,if(n3>0,getvalue(xd,n3),text("Mosel Doc")))
+ n:=addnode(xt,n,XML_NEXT,XML_ELT,"body")
+ n:=addnode(xt,n,XML_ELT,"blockquote")
+ n2:=addnode(xt,n,XML_ELT,"br")
+ n2:=addnode(xt,n,XML_ELT,"br")
+ n4:=getnode(xd,0,"/*/title")
+ if n4>0 then
+  n2:=copynode(xd,n4,xt,n,XML_LASTCHILD)
+  update_tags(xt,n2,links)
+  setname(xt,n2,"h1")
+  setattr(xt,n2,"class","TitleColor")
+  setattr(xt,n2,"align","center")
+  n4:=getnode(xd,0,"/*/subtitle")
+  if n4>0 then
+   n2:=copynode(xd,n4,xt,n,XML_LASTCHILD)
+   update_tags(xt,n2,links)
+   setname(xt,n2,"h2")
+   setattr(xt,n2,"class","TitleColor")
+   setattr(xt,n2,"align","center")
+  end-if
+ else
+  if n3>0 then
+   title:=getvalue(xd,n3)+" manual"
+  else
+   title:="Reference manual"
+  end-if
+  n2:=addnode(xt,n,XML_ELT,"h1")
+  setattr(xt,n2,"class","TitleColor")
+  setattr(xt,n2,"align","center")
+  setvalue(xt,n2,title)
+ end-if
+ forall(i in 1..7) n2:=addnode(xt,n,XML_ELT,"br")
+ n2:=addnode(xt,n,XML_ELT,"h4")
+ setattr(xt,n2,"align","center")
+ n4:=getnode(xd,0,"/*/version")
+ if n4>0 then
+  setvalue(xt,n2,text("Release ")+getvalue(xd,n4))
+ else
+  n2:=addnode(xt,n,XML_ELT,"br")
+ end-if
+ forall(i in 1..4) n2:=addnode(xt,n,XML_ELT,"br")
+ n4:=getnode(xd,0,"/*/date")
+ if n4>0 then
+  dte:=getvalue(xd,n4)
+ else
+  dte:=text(date(SYS_NOW))
+ end-if
+ n2:=addnode(xt,n,XML_ELT,"p")
+ setattr(xt,n2,"class","body")
+ n2:=addnode(xt,n,XML_ELT,"b")
+ setvalue(xt,n2,text("Last modification ")+dte)
+ forall(i in 1..4) n2:=addnode(xt,n,XML_ELT,"br")
+ n2:=addnode(xt,n,XML_ELT,"div")
+ setattr(xt,n2,"class","navi")
+ n2:=addnode(xt,n2,XML_TXT,"[")
+ n2:=addnode(xt,n2,XML_NEXT,XML_ELT,"a")
+ setattr(xt,n2,"href",firstchap)
+ setvalue(xt,n2,"Next")
+ n2:=addnode(xt,n2,XML_NEXT,XML_TXT,"]")
+ save(xt,getnode(xt,0,"html"),bdir+"/"+coverfile)
+end-procedure
+
+!***********************************
+!* Add an entry to the TOC (string)
+!***********************************
+procedure addtoc_entry(xt:xmldoc,b:integer,cls:integer,ref:text,name:text)
+ p:=addnode(xt,b,XML_ELT,"p")
+ setattr(xt,p,"class",text("TOC")+cls)
+ p:=addnode(xt,p,XML_ELT,"a",name)
+ setattr(xt,p,"href",ref)
+ setattr(xt,p,"class",text("TOC")+cls+"a")
+end-procedure
+
+!***********************************
+!* Add an entry to the TOC (node)
+!***********************************
+procedure addtoc_entry(xt:xmldoc,b:integer,cls:integer,ref:text,node:integer,links:array(string) of text)
+ p:=addnode(xt,b,XML_ELT,"p")
+ setattr(xt,p,"class",text("TOC")+cls)
+ if testattr(xd,node,"cont") then
+  p:=addnode(xt,p,XML_ELT,"a",getattr(xd,node,"cont"))
+ else
+  p:=copynode(xd,node,xt,p,XML_LASTCHILD)
+  update_tags(xt,p,links)
+  setname(xt,p,"a")
+ end-if
+ setattr(xt,p,"href",ref)
+ setattr(xt,p,"class",text("TOC")+cls+"a")
+end-procedure
+
+!********************************
+!* Gnerete the TOC XML document
+!********************************
+procedure enumtoc(n:integer,xt:xmldoc,body:integer,cls:integer,chap:text,links:array(string) of text)
+ n:=getfirstchild(xd,n)
+ while(n>=0) do
+  case getname(xd,n) of
+   "chapter":
+	do
+	 href:=getattr(xd,n,"id")+".html"
+	 links(string(getattr(xd,n,"id"))):=href
+	 title:=getnode(xd,n,"title")
+	 links(string(getattr(xd,n,"id")+"-title")):=
+	 	if(testattr(xd,title,"cont"),getattr(xd,title,"cont"),getvalue(xd,title))
+	 if firstchap=DEFCHAP then firstchap:=href; end-if
+	 addtoc_entry(xt,body,cls,href,title,links)
+	 enumtoc(n,xt,body,cls+1,href,links)
+	end-do
+   "section":
+	do
+	 href:=chap+"#"+getattr(xd,n,"id")
+	 links(string(getattr(xd,n,"id"))):=href
+	 title:=getnode(xd,n,"title")
+	 links(string(getattr(xd,n,"id")+"-title")):=
+	 	if(testattr(xd,title,"cont"),getattr(xd,title,"cont"),getvalue(xd,title))
+	 addtoc_entry(xt,body,cls,href,title,links)
+	 enumtoc(n,xt,body,cls+1,chap,links)
+	end-do
+   "subsection":
+	do
+	 href:=chap+"#"+getattr(xd,n,"id")
+	 links(string(getattr(xd,n,"id"))):=href
+	 title:=getnode(xd,n,"title")
+	 links(string(getattr(xd,n,"id")+"-title")):=
+	 	if(testattr(xd,title,"cont"),getattr(xd,title,"cont"),getvalue(xd,title))
+	 if cls=1 then
+	  addtoc_entry(xt,body,cls,href,title,links)
+	  enumtoc(n,xt,body,cls+1,chap,links)
+	 else
+	  enumtoc(n,xt,body,cls,chap,links)
+	 end-if
+	end-do
+   "entity":
+	do
+	 href:=chap+"#"+getattr(xd,n,"name")
+	 links(string(getattr(xd,n,"name"))):=href
+	 addtoc_entry(xt,body,cls,href,getattr(xd,n,"name"))
+	end-do
+   "fct":
+	do
+	 href:=getattr(xd,n,"name")+".html"
+	 fname:=getattr(xd,n,"name")
+	 if getattr(xd,n,"name2")<>"" then
+	  fname+=text(", ")+getattr(xd,n,"name2")
+	  if getattr(xd,n,"name3")<>"" then
+	   fname+=text(", ")+getattr(xd,n,"name3")
+	   if getattr(xd,n,"name4")<>"" then
+	    fname+=text(", ")+getattr(xd,n,"name4")
+	   end-if
+	  end-if
+	 end-if
+	 addtoc_entry(xt,body,cls,href,fname)
+	end-do
+  end-case
+  n:=getnext(xd,n)
+ end-do
+end-procedure
+
+!*************************************
+!* Initial setting of a new HTML file
+!*************************************
+function sethtmlhead(xt:xmldoc,title:text,ifmath:boolean):integer
+ n:=addnode(xt,0,XML_ELT,"html")
+ n2:=addnode(xt,n,XML_COM,glbcom)
+ setvspace(xt,n2,1)
+ returned:=addnode(xt,n,XML_ELT,"head")
+ setvspace(xt,returned,1)
+ n2:=addnode(xt,returned,XML_ELT,"meta")
+ setvspace(xt,n2,1)
+ setattr(xt,n2,"http-equiv","Content-Type")
+ setattr(xt,n2,"content","text/html; charset=UTF-8")
+ if title<>"" then
+  n2:=addnode(xt,returned,XML_ELT,"title",title)
+ end-if
+ n2:=addnode(xt,returned,XML_ELT,"link")
+ setattr(xt,n2,"rel","stylesheet")
+ setattr(xt,n2,"href","moseldoc.css")
+ setattr(xt,n2,"type","text/css")
+ if ifmath then
+  n2:=addnode(xt,returned,XML_ELT,"script")
+  setattr(xt,n2,"type","text/javascript")
+  setattr(xt,n2,"src","load-mathjax.js")
+  setattr(xt,n2,"async","true")
+  setvalue(xt,n2," ")
+ end-if
+end-function
+
+function sethtmlhead(xt:xmldoc,title:text):integer
+  returned:=sethtmlhead(xt,title,false)
+end-function
+
+!*****************************
+!* Add a footer to a page
+!*****************************
+procedure sethtmlfoot(xt:xmldoc,links:array(string) of text)
+ n:=getnode(xt,0,'/html/body/blockquote/div[@class="Navi"]')
+ n2:=addnode(xt,getnode(xt,0,'/html/body/blockquote'),XML_LASTCHILD,XML_ELT,"br")
+ setvspace(xt,n2,2)
+ if n>0 then
+  n2:=copynode(xt,n,xt,n2,XML_NEXT)
+  update_tags(xt,n2,links)
+ end-if
+ n:=addnode(xt,n2,XML_NEXT,XML_ELT,"hr")
+ setattr(xt,n,"noshade","")
+ setattr(xt,n,"class","ChapterLine")
+ n:=addnode(xt,n,XML_NEXT,XML_ELT,"address")
+ setvspace(xt,n,1)
+ setvalue(xt,n,glbcom1+" on "+glbcom2)
+end-procedure
+
+!*********************************
+!* Create the header of the TOC
+!*********************************
+function starttoc(xt:xmldoc):integer
+ h:=sethtmlhead(xt,"Table of contents")
+ n2:=addnode(xt,h,XML_ELT,"base")
+ setattr(xt,n2,"target","main")
+ returned:=addnode(xt,h,XML_NEXT,XML_ELT,"body")
+ setattr(xt,returned,"style","background-color:#f2f2f2;")
+end-function
+
+!*****************************
+!* Create the TOC
+!*****************************
+procedure buildtoc(tocfile:text,links:array(string) of text)
+ declarations
+  xt:xmldoc
+ end-declarations
+ n:=getnode(xd,"mosel-doc")
+ if n<0 then
+  n:=getnode(xd,"manual")
+ end-if
+ b:=starttoc(xt)
+ firstchap:=DEFCHAP
+ enumtoc(n,xt,b,1,firstchap,links)
+ save(xt,getnode(xt,0,"html"),tocfile)
+end-procedure
+
+!*******************************************************************
+!* Insert an XML text with back-to-top link and fix the references
+!*******************************************************************
+procedure output_text_back(n:integer,xt:xmldoc,nd:integer,name:string,cls:string,links:array(string) of text)
+ n2:=copynode(xd,n,xt,nd,XML_LASTCHILD)
+ n3:=addnode(xt,n2,XML_LASTCHILD,XML_ELT,"a"," ")
+ setattr(xt,n3,"href","#")
+ setattr(xt,n3,"class","BackToTop")
+ setname(xt,n2,name)
+ setvspace(xt,n2,1)
+ setattr(xt,n2,"class",cls)
+ update_tags(xt,n2,links)
+end-procedure
+
+!*********************************************
+!* Insert an XML text and fix the references
+!*********************************************
+procedure output_text(n:integer,xt:xmldoc,nd:integer,name:string,cls:string,links:array(string) of text)
+ n2:=copynode(xd,n,xt,nd,XML_LASTCHILD)
+ setname(xt,n2,name)
+ setvspace(xt,n2,1)
+ setattr(xt,n2,"class",cls)
+ update_tags(xt,n2,links)
+end-procedure
+
+!********************************************************
+!* Insert an XML text-deprecated and fix the references
+!********************************************************
+procedure output_deprec(n:integer,xt:xmldoc,nd:integer,msg:string,links:array(string) of text)
+ if n<0 then
+  n2:=addnode(xt,nd,XML_LASTCHILD)
+ else
+  n2:=copynode(xd,n,xt,nd,XML_LASTCHILD)
+ end-if
+ setname(xt,n2,"em")
+ n3:=addnode(xt,n2,XML_FIRSTCHILD,XML_TXT,msg)
+ setvspace(xt,n2,1)
+ update_tags(xt,n2,links)
+end-procedure
+
+!*********************************
+!* Insert a code extract (CDATA)
+!*********************************
+procedure output_code(n:integer,xt:xmldoc,nd:integer,name:string,cls:string)
+ n2:=addnode(xt,nd,XML_ELT,name)
+ setattr(xt,n2,"class",cls)
+ if gettype(xd,getfirstchild(xd,n))=XML_CDATA then
+  n:=getfirstchild(xd,n)
+  if name<>"pre" then
+   n2:=addnode(xt,n2,XML_ELT,"pre")
+  end-if
+  setvalue(xt,n2,getvalue(xd,n))
+ else
+  n2:=copynode(xd,n,xt,n2,XML_LASTCHILD)
+ end-if
+end-procedure
+
+!**************************************
+!* Process an entity (cst,typ,par,var)
+!**************************************
+procedure output_entity(n:integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ declarations
+  nlist: list of integer
+ end-declarations
+ nd:=addnode(xt,nd,XML_ELT,"dl")
+ n2:=addnode(xt,nd,XML_ELT,"dt")
+ n2:=addnode(xt,n2,XML_ELT,"div")
+ setattr(xt,n2,"class","Entity")
+ n3:=addnode(xt,n2,XML_ELT,"a")
+ setattr(xt,n3,"name",getattr(xd,n,"name"))
+ cat:=getattr(xd,n,"cat")
+ if cat="fctreq" then
+  getnodes(xd,n,"entSyntax",nlist)
+  forall(i in nlist) do
+   ns:=getfirstchild(xd,i)
+   while(ns>0) do
+    n2:=addnode(xt,nd,XML_ELT,"div")
+    setattr(xt,n2,"class","EntSynopsis")
+    setvspace(xt,n2,1)
+    n3:=addnode(xt,n2,XML_ELT,"code")
+    n3:=addnode(xt,n3,XML_TXT,getvalue(xd,ns))
+    n3:=addnode(xt,n2,XML_ELT,"br")
+    ns:=getnext(xd,ns)
+   end-do
+  end-do
+ else
+  setvalue(xt,n3," ")
+  n3:=addnode(xt,n2,XML_TXT,getattr(xd,n,"name")+" ")
+  if cat<>"annot" then
+   n3:=addnode(xt,n2,XML_ELT,"span")
+   setattr(xt,n3,"class","code")
+   if getnode(xd,n,"entConst")>0 then
+    cstv:=getvalue(xd,getnode(xd,n,"entConst"))
+    if cstv.size>55 then
+     deltext(cstv,55,cstv.size)
+     cstv+="..."
+    end-if
+    setvalue(xt,n3,text("= ")+cstv)
+   elif getnode(xd,n,"entType")>0 then
+    setvalue(xt,n3,text(": ")+getvalue(xd,getnode(xd,n,"entType")))
+   end-if
+  end-if
+ end-if
+
+ nl:=addnode(xt,nd,XML_ELT,"dd")
+ nl:=addnode(xt,nl,XML_ELT,"table")
+ setattr(xt,nl,"border","0")
+ setattr(xt,nl,"cellpadding","2")
+ setattr(xt,nl,"cellspacing","0")
+ setattr(xt,nl,"style","margin-left: -5pt; margin-top: 0pt; margin-bottom: 3pt")
+ n2:=addnode(xt,nl,XML_TXT)
+
+ ns:=getnode(xd,n,"entDescr")
+ depattr:=getattr(xd,n,"deprecated")
+ if ns>0  or (depattr="deprecated") then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n2:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n2,"valign","top")
+  setattr(xt,n2,"colspan","2")
+  if depattr="deprecated" then
+    ns2:=getnode(xd,n,"entDeprecated")
+    n3:=addnode(xt,n2,XML_ELT,"div")
+    setattr(xt,n3,"class","CellBody")
+    case string(cat) of
+    "annot": depattr:="annotation"
+    "ctrl": depattr:="parameter"
+    "type": depattr:="type definition"
+    else depattr:="entity"
+    end-case
+    output_deprec(ns2,xt,n3,"This "+depattr+" is deprecated. ",links)
+  end-if
+  if ns>0 then
+   output_text(ns,xt,n2,"div","CellBody",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"entField")
+ while (ns>0) do
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n2:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n2,"valign","top")
+  setattr(xt,n2,"colspan","2")
+  n2:=addnode(xt,n2,XML_ELT,"div")
+  setattr(xt,n2,"class","EntItem")
+  n3:=addnode(xt,n2,XML_TXT,getattr(xd,ns,"name")+" ")
+  ns2:=getnode(xd,ns,"entType")
+  if ns2>0 then
+   n3:=addnode(xt,n2,XML_ELT,"span")
+   setattr(xt,n3,"class","code")
+   setvalue(xt,n3,text(": ")+getvalue(xd,ns2))
+  end-if
+  ns2:=getnode(xd,ns,"entDescr")
+  ns3:=getnode(xd,ns,"entValues")
+  if ns2>0 or ns3>0 then
+   n2:=addnode(xt,nl,XML_ELT,"tr")
+   n3:=addnode(xt,n2,XML_ELT,"td")
+   setvalue(xt,n3," ")
+   n2:=addnode(xt,n2,XML_ELT,"td")
+   setattr(xt,n2,"valign","top")
+   n2:=addnode(xt,n2,XML_ELT,"table")
+   setattr(xt,n2,"border","0")
+   setattr(xt,n2,"cellpadding","0")
+   setattr(xt,n2,"cellspacing","0")
+   setattr(xt,n2,"style","margin-left: 0pt; margin-top: 0pt; margin-bottom: 0pt")
+   if ns2>0 then
+    n3:=addnode(xt,n2,XML_ELT,"tr")
+    n3:=addnode(xt,n3,XML_ELT,"td")
+    setattr(xt,n3,"valign","top")
+    setattr(xt,n3,"colspan","2")
+    output_text(ns2,xt,n3,"div","CellBody",links)
+   end-if  
+   if ns3>0 then
+    n3:=addnode(xt,n2,XML_ELT,"tr")
+    n4:=addnode(xt,n3,XML_ELT,"td")
+    setattr(xt,n4,"valign","top")
+    n4:=addnode(xt,n4,XML_ELT,"div", "Values")
+    setattr(xt,n4,"class","EntItem")
+    n4:=addnode(xt,n3,XML_ELT,"td")
+    setattr(xt,n4,"valign","top")
+    n4:=addnode(xt,n4,XML_ELT,"div")
+    setattr(xt,n4,"class","CellBody")
+    n4:=addnode(xt,n4,XML_ELT,"table")
+    setattr(xt,n4,"border","0")
+    setattr(xt,n4,"cellpadding","0")
+    setattr(xt,n4,"cellspacing","0")
+    setattr(xt,n4,"style","margin-left: -0pt; margin-top: 0pt; margin-bottom: 0pt")
+    
+    getnodes(xd,ns3,"entVal",nlist)
+    forall(j in nlist) do
+     n5:=addnode(xt,n4,XML_ELT,"tr")
+     n6:=addnode(xt,n5,XML_ELT,"td")
+     setattr(xt,n6,"valign","top")
+     setattr(xt,n6,"nowrap","nowrap")
+     setattr(xt,n6,"width","28")
+     n6:=addnode(xt,n6,XML_ELT,"div",getattr(xd,j,"value"))
+     setattr(xt,n6,"class","EntLabel")
+     n6:=addnode(xt,n5,XML_ELT,"td")
+     setattr(xt,n6,"valign","top")
+     output_text(j,xt,n6,"div","CellBody",links)
+    end-do
+   end-if
+  end-if
+  ns:=getnext(xd,ns)
+ end-do
+
+ if cat="annot" then
+  ns:=getnode(xd,n,"entType")
+  if ns>0 then
+   n2:=addnode(xt,nl,XML_ELT,"tr")
+   n3:=addnode(xt,n2,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   setattr(xt,n3,"width","150px")
+   n3:=addnode(xt,n3,XML_ELT,"div")
+   setattr(xt,n3,"class","EntItem")
+   setvalue(xt,n3,"Type")
+   n3:=addnode(xt,n2,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   output_text(ns,xt,n3,"div","EntLabel",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"entDefault")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"width","150px")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Default value")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  output_text(ns,xt,n3,"div","CellBody",links)
+ end-if
+
+ ns:=getnode(xd,n,"entValues")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Values")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","CellBody")
+  n3:=addnode(xt,n3,XML_ELT,"table")
+  setattr(xt,n3,"border","0")
+  setattr(xt,n3,"cellpadding","0")
+  setattr(xt,n3,"cellspacing","0")
+  setattr(xt,n3,"style","margin-left: -0pt; margin-top: 0pt; margin-bottom: 0pt")
+  ns2:=getfirstchild(xd,ns)
+  while(ns2>0) do
+   ne:=addnode(xt,n3,XML_ELT,"tr")
+   n4:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n4,"valign","top")
+   setattr(xt,n4,"nowrap","")
+   setattr(xt,n4,"width","28")
+   if getname(xd,ns2)="entVal" then
+    n4:=addnode(xt,n4,XML_ELT,"div",getattr(xd,ns2,"value"))
+    setattr(xt,n4,"class","EntLabel")
+    n4:=addnode(xt,ne,XML_ELT,"td")
+    setattr(xt,n4,"valign","top")
+    delattr(xd,ns2,"value")
+    output_text(ns2,xt,n4,"div","CellBody",links)
+   else
+    n4:=addnode(xt,n4,XML_ELT,"div",getvalue(xd,ns2))
+   end-if
+   ns2:=getnext(xd,ns2)
+  end-do
+ end-if
+
+ ns:=getnode(xd,n,"entAffects")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"width","150px")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Affects routines ")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  output_text(ns,xt,n3,"div","CellBody",links)
+ end-if
+
+ ns:=getnode(xd,n,"entSetby")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"width","150px")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Set by routines ")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  output_text(ns,xt,n3,"div","CellBody",links)
+ end-if
+
+ ns:=getnode(xd,n,"entScope")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"width","150px")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Scope")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  tval:=getvalue(xd,ns)
+  if tval="specific" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "specific (must be attached to a declaration)")
+   setattr(xt,n3,"class","CellBody")
+  elif tval="global" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "global (not attached to any declaration)")
+   setattr(xt,n3,"class","CellBody")
+  elif tval="any" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "any (can be global or attached to a declaration)")
+   setattr(xt,n3,"class","CellBody")
+  else
+   output_text(ns,xt,n3,"div","CellBody",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"entPolicy")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"width","150px")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Duplicates policy")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  tval:=getvalue(xd,ns)
+  if tval="last" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "last (the last definition is kept)")
+   setattr(xt,n3,"class","CellBody")
+  elif tval="first" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "first (the first definition is kept ignoring all others)")
+   setattr(xt,n3,"class","CellBody")
+  elif tval="merge" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "merge (definitions are concatenated)")
+   setattr(xt,n3,"class","CellBody")
+  elif tval="multi" then
+   n3:=addnode(xt,n3,XML_ELT,"div", "multi (all definitions are kept)")
+   setattr(xt,n3,"class","CellBody")
+  else
+   output_text(ns,xt,n3,"div","CellBody",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"entNote")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"Note ")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  ns:=getfirstchild(xd,ns)
+  if getname(xd,ns)="entNoteItem" then
+   nbit:=1
+   repeat
+    output_text(ns,xt,n3,"div","ParamInfo",links)
+    n2:=getlastchild(xt,n3)
+    n2:=addnode(xt,n2,XML_FIRSTCHILD,XML_TXT,text(nbit)+".\t ")
+    nbit+=1
+    ns:=getnext(xd,ns)
+   until(ns<1)
+  else
+   output_text(getnode(xd,n,"entNote"),xt,n3,"div","CellBody",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"entRelated")
+ if ns>0 then
+  n2:=addnode(xt,nl,XML_ELT,"tr")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","EntItem")
+  setvalue(xt,n3,"See also ")
+  n3:=addnode(xt,n2,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  output_text(ns,xt,n3,"div","CellBody",links)
+ end-if
+
+end-procedure
+
+!**************************************
+!* Process a subroutine
+!**************************************
+procedure output_fct(bdir:text,n:integer,prev:text,links:array(string) of text)
+ declarations
+  xt:xmldoc
+ end-declarations
+
+ hname:=getattr(xd,n,"name")
+ if getattr(xd,n,"name2")<>"" then
+  hname+=text(" ")+getattr(xd,n,"name2")
+  if getattr(xd,n,"name3")<>"" then
+   hname+=text(" ")+getattr(xd,n,"name3")
+   if getattr(xd,n,"name4")<>"" then
+   hname+=text(" ")+getattr(xd,n,"name4")
+   end-if 
+  end-if 
+ end-if
+ n2:=sethtmlhead(xt,hname,ifmathj)
+ n2:=addnode(xt,n2,XML_NEXT,XML_ELT,"body")
+ nd:=addnode(xt,n2,XML_ELT,"blockquote")
+ setvspace(xt,nd,1)
+ n2:=addnode(xt,nd,XML_ELT,"div")
+ setattr(xt,n2,"class","Navi")
+ if prev<>"" then
+  n3:=addnode(xt,n2,XML_TXT,"[")
+  n3:=addnode(xt,n3,XML_NEXT,XML_ELT,"a")
+  setattr(xt,n3,"href",prev)
+  setvalue(xt,n3,"Previous")
+  n3:=addnode(xt,n3,XML_NEXT,XML_TXT,"]")
+ end-if
+ n3:=getnext(xd,n)
+ if n3>0 and getname(xd,n3)="fct" then
+  nextfct:=getattr(xd,n3,"name")+".html"
+  n3:=addnode(xt,n2,XML_TXT,"[")
+  n3:=addnode(xt,n3,XML_NEXT,XML_ELT,"a")
+  setattr(xt,n3,"href",nextfct)
+  setvalue(xt,n3,"Next")
+  n3:=addnode(xt,n3,XML_NEXT,XML_TXT,"]")
+ end-if
+ prev:=getattr(xd,n,"name")+".html"
+
+ n2:=addnode(xt,nd,XML_ELT,"table")
+ setattr(xt,n2,"width","90%")
+ setattr(xt,n2,"border","0")
+ setattr(xt,n2,"style","margin-top: 14pt;")
+ setattr(xt,n2,"cellpadding","0pt")
+ setattr(xt,n2,"cellspacing","0pt")
+ n2:=addnode(xt,n2,XML_ELT,"tr")
+ n3:=addnode(xt,n2,XML_ELT,"td")
+ n3:=addnode(xt,n3,XML_ELT,"h1")
+ setattr(xt,n3,"class","FctName")
+ setvspace(xt,n3,2)
+
+ n3:=addnode(xt,n3,XML_ELT,"a")
+ setattr(xt,n3,"name",getattr(xd,n,"name"))
+ setvalue(xt,n3," ")
+ n3:=addnode(xt,n3,XML_NEXT,XML_TXT,getattr(xd,n,"name"))
+ if getattr(xd,n,"name2")<>"" then
+  n3:=addnode(xt,n3,XML_NEXT,XML_TXT,", ")
+  n3:=addnode(xt,n3,XML_NEXT,XML_ELT,"a")
+  setattr(xt,n3,"name",getattr(xd,n,"name2"))
+  setvalue(xt,n3," ")
+  n3:=addnode(xt,n3,XML_NEXT,XML_TXT,getattr(xd,n,"name2"))
+  if getattr(xd,n,"name3")<>"" then
+   n3:=addnode(xt,n3,XML_NEXT,XML_TXT,", ")
+   n3:=addnode(xt,n3,XML_NEXT,XML_ELT,"a")
+   setattr(xt,n3,"name",getattr(xd,n,"name3"))
+   setvalue(xt,n3," ")
+   n3:=addnode(xt,n3,XML_NEXT,XML_TXT,getattr(xd,n,"name3"))
+   if getattr(xd,n,"name4")<>"" then
+    n3:=addnode(xt,n3,XML_NEXT,XML_TXT,", ")
+    n3:=addnode(xt,n3,XML_NEXT,XML_ELT,"a")
+    setattr(xt,n3,"name",getattr(xd,n,"name4"))
+    setvalue(xt,n3," ")
+    n3:=addnode(xt,n3,XML_NEXT,XML_TXT,getattr(xd,n,"name4"))
+   end-if
+  end-if
+ end-if
+
+ n3:=addnode(xt,n2,XML_ELT,"td")
+ setvalue(xt,n3," ");
+
+ n2:=addnode(xt,nd,XML_ELT,"hr")
+ setattr(xt,n2,"noshade","")
+ setattr(xt,n2,"class","FctLine")
+
+ ns:=getnode(xd,n,"fctDescr")
+ depattr:=getattr(xd,n,"deprecated")
+ if ns>0 or (depattr="deprecated") then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Purpose")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  if depattr="deprecated" then
+    ns2:=getnode(xd,n,"fctDeprecated")
+    n2:=addnode(xt,nd,XML_ELT,"div")
+    setattr(xt,n2,"class","FctItemText")
+    output_deprec(ns2,xt,n2,"This subroutine is deprecated. ",links)
+  end-if
+  if ns>0 then
+   output_text(ns,xt,nd,"div","FctItemText",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"fctSyntax")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Synopsis")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  ns:=getfirstchild(xd,ns)
+  while(ns>0) do
+   n2:=addnode(xt,nd,XML_ELT,"div")
+   setattr(xt,n2,"class","FctSynopsis")
+   setvspace(xt,n2,1)
+   n3:=addnode(xt,n2,XML_ELT,"code")
+   n3:=addnode(xt,n3,XML_TXT,getvalue(xd,ns))
+   n3:=addnode(xt,n2,XML_ELT,"br")
+   ns:=getnext(xd,ns)
+  end-do
+ end-if
+
+ ns:=getnode(xd,n,"fctArguments")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Arguments")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+
+  n2:=addnode(xt,nd,XML_ELT,"table")
+  setvspace(xt,n2,1)
+  setattr(xt,n2,"border","0")
+  setattr(xt,n2,"cellpadding","1")
+  setattr(xt,n2,"cellspacing","0")
+  setattr(xt,n2,"style","margin-left: 40pt")
+  ns:=getfirstchild(xd,ns)
+  while(ns>0) do
+   ne:=addnode(xt,n2,XML_ELT,"tr")
+   setvspace(xt,ne,1)
+   n3:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   setattr(xt,n3,"nowrap","")
+   n3:=addnode(xt,n3,XML_ELT,"div")
+   setattr(xt,n3,"class","FctArg")
+   setvalue(xt,n3,getattr(xd,ns,"name")+"\240")
+   delattr(xd,ns,"name")  ! useless in HTML
+
+   n3:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   setattr(xt,n3,"nowrap","")
+   nsfc:=getfirstchild(xd,ns)
+   if nsfc>1 and getname(xd,nsfc)="fctArgText" then
+    output_text(nsfc,xt,n3,"div","CellBody",links)
+    nsfc:=getnext(xd,nsfc)
+    if nsfc>1 then
+     output_fctargval(xt,nsfc,n3,links)
+    end-if
+   else
+    output_text(ns,xt,n3,"div","CellBody",links)
+   end-if
+
+   ns:=getnext(xd,ns)
+  end-do
+ end-if
+
+ ns:=getnode(xd,n,"fctErrors")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Error values")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+
+  n2:=addnode(xt,nd,XML_ELT,"table")
+  setattr(xt,n2,"border","0")
+  setattr(xt,n2,"cellpadding","1")
+  setattr(xt,n2,"cellspacing","0")
+  setattr(xt,n2,"style","margin-left: 40pt")
+  setvspace(xt,n2,1)
+  ns:=getfirstchild(xd,ns)
+  while(ns>0) do
+   ne:=addnode(xt,n2,XML_ELT,"tr")
+   n3:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   n3:=addnode(xt,n3,XML_ELT,"div")
+   setattr(xt,n3,"class","FctArg")
+   setvspace(xt,n3,1)
+   ername:=string(getattr(xd,ns,"num"))
+   if links(ername)<>"" then
+    n3:=addnode(xt,n3,XML_ELT,"a")
+    setattr(xt,n3,"href",links(ername))
+    setvalue(xt,n3,ername)
+    n3:=addnode(xt,n3,XML_NEXT,XML_TXT,"\240")
+   else
+    setvalue(xt,n3,getattr(xd,ns,"num")+"\240")
+   end-if
+
+   n3:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n3,"valign","top")
+   output_text(ns,xt,n3,"div","CellBody",links)
+
+   ns:=getnext(xd,ns)
+  end-do
+ end-if
+
+ ns:=getnode(xd,n,"fctReturn")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Return value")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  output_text(ns,xt,nd,"div","FctItemText",links)
+ end-if
+
+ ns:=getnode(xd,n,"fctExample")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Example")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  ns:=getfirstchild(xd,ns)
+  while (ns>0) do
+   if getname(xd,ns)="fctExampleText" then
+    output_text(ns,xt,nd,"div","FctItemText",links)
+   elif getname(xd,ns)="fctExampleCode" then
+    output_code(ns,xt,nd,"div","FctCode")
+   end-if
+   ns:=getnext(xd,ns)
+  end-do
+ end-if
+
+ ns:=getnode(xd,n,"fctFurtherinfo")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Further information")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  ns:=getfirstchild(xd,ns)
+  if getname(xd,ns)="fctFurtherinfoItem" then
+   nbit:=1
+   repeat
+    output_text(ns,xt,nd,"div","FctInfo",links)
+    n3:=getlastchild(xt,nd)
+    n3:=addnode(xt,n3,XML_FIRSTCHILD,XML_TXT,text(nbit)+".\t ")
+    nbit+=1
+    ns:=getnext(xd,ns)
+   until(ns<1)
+  else
+   output_text(getnode(xd,n,"fctFurtherinfo"),xt,nd,"div","FctItemText",links)
+  end-if
+ end-if
+
+ ns:=getnode(xd,n,"fctRelated")
+ if ns>0 then
+  n2:=addnode(xt,nd,XML_ELT,"div")
+  setattr(xt,n2,"class","FctItem")
+  setvspace(xt,n2,1)
+  n3:=addnode(xt,n2,XML_TXT,"Related Topics")
+  n3:=addnode(xt,n2,XML_ELT,"br")
+  output_text(ns,xt,nd,"div","FctItemText",links)
+ end-if
+
+ sethtmlfoot(xt,links)
+ setindentmode(xt,XML_MANUAL)
+ save(xt,getnode(xt,0,"html"),bdir+"/"+getattr(xd,n,"name")+".html")
+ if getattr(xd,n,"name2")<>"" then
+  fcopy(bdir+"/"+getattr(xd,n,"name")+".html",bdir+"/"+getattr(xd,n,"name2")+".html")
+  if getattr(xd,n,"name3")<>"" then
+   fcopy(bdir+"/"+getattr(xd,n,"name")+".html",bdir+"/"+getattr(xd,n,"name3")+".html")
+   if getattr(xd,n,"name4")<>"" then
+    fcopy(bdir+"/"+getattr(xd,n,"name")+".html",bdir+"/"+getattr(xd,n,"name4")+".html")
+   end-if 
+  end-if 
+ end-if
+end-procedure
+
+!***************************************************
+!* Output function argument values
+!***************************************************
+procedure output_fctargval(xt:xmldoc,nv:integer,nd:integer,links:array(string) of text)
+ n2:=addnode(xt,nd,XML_ELT,"table")
+ setvspace(xt,n2,1)
+ setattr(xt,n2,"border","0")
+ setattr(xt,n2,"cellpadding","1")
+ setattr(xt,n2,"cellspacing","0")
+ setattr(xt,n2,"style","margin-left: 0pt")
+ repeat
+  ne:=addnode(xt,n2,XML_ELT,"tr")
+  setvspace(xt,ne,1)
+  n3:=addnode(xt,ne,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  setattr(xt,n3,"nowrap","")
+  setattr(xt,n3,"width","28")
+  n3:=addnode(xt,n3,XML_ELT,"div")
+  setattr(xt,n3,"class","FctArg")
+  setvalue(xt,n3,getattr(xd,nv,"value")+"\240")
+  delattr(xd,nv,"value")  ! useless in HTML
+  n3:=addnode(xt,ne,XML_ELT,"td")
+  setattr(xt,n3,"valign","top")
+  output_text(nv,xt,n3,"div","CellBody",links)
+  nv:=getnext(xd,nv)
+ until nv<0
+ 
+end-procedure
+
+!***************************************************
+!* Output the function list of the current section
+!***************************************************
+procedure output_fctlist(lfct:list of integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ nt:=addnode(xt,nd,XML_NEXT,XML_ELT,"table")
+ setattr(xt,nt,"border","0")
+ setattr(xt,nt,"cellpadding","5")
+ setattr(xt,nt,"cellspacing","0")
+ setattr(xt,nt,"class","FctList")
+ forall(f in lfct|f>0)
+ do
+  ne:=addnode(xt,nt,XML_ELT,"tr")
+  n4:=addnode(xt,ne,XML_ELT,"td")
+  setattr(xt,n4,"valign","top")
+  n4:=addnode(xt,n4,XML_ELT,"div")
+  setattr(xt,n4,"class","CellBody")
+  n4:=addnode(xt,n4,XML_ELT,"span")
+  setattr(xt,n4,"class","Code")
+  n4:=addnode(xt,n4,XML_ELT,"a")
+  setattr(xt,n4,"href",getattr(xd,f,"name")+".html")
+  fn:=getattr(xd,f,"name")
+  if getattr(xd,f,"name2")<>"" then
+   fn+=text(", ")+getattr(xd,f,"name2")
+   if getattr(xd,f,"name3")<>"" then
+    fn+=text(", ")+getattr(xd,f,"name3")
+    if getattr(xd,f,"name4")<>"" then
+     fn+=text(", ")+getattr(xd,f,"name4")
+    end-if
+   end-if
+  end-if
+  setvalue(xt,n4,fn)
+  sdesc:=getattr(xd,f,"descr")
+  if sdesc<>"" then
+   n4:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n4,"valign","top")
+   n4:=addnode(xt,n4,"div",sdesc)
+   setattr(xt,n4,"class","CellBody")
+  else
+   desc:=getnode(xd,f,"fctDescr")
+   if desc>0 then
+    n4:=addnode(xt,ne,XML_ELT,"td")
+    setattr(xt,n4,"valign","top")
+    output_text(desc,xt,n4,"div","CellBody",links)
+   end-if
+  end-if
+ end-do
+ 
+end-procedure
+
+!*************************
+!* Output an entity list
+!*************************
+procedure output_entlist(lent:list of integer,xt:xmldoc,nd:integer,links:array(string) of text)
+ if lent.size>0 then
+  nt:=addnode(xt,nd,XML_NEXT,XML_ELT,"table")
+  setattr(xt,nt,"border","0")
+  setattr(xt,nt,"cellpadding","5")
+  setattr(xt,nt,"cellspacing","0")
+  setattr(xt,nt,"class","FctList")
+  forall(f in lent|f>0)
+  do
+   ne:=addnode(xt,nt,XML_ELT,"tr")
+   n4:=addnode(xt,ne,XML_ELT,"td")
+   setattr(xt,n4,"valign","top")
+   n4:=addnode(xt,n4,XML_ELT,"div")
+   setattr(xt,n4,"class","CellBody")
+   n4:=addnode(xt,n4,XML_ELT,"span")
+   setattr(xt,n4,"class","Code")
+   n4:=addnode(xt,n4,XML_ELT,"a")
+   fn:=getattr(xd,f,"name")
+   setattr(xt,n4,"href",links(string(fn)))
+   setvalue(xt,n4,fn)
+   desc:=getnode(xd,f,"entDescr")
+   if desc>0 then
+    n4:=addnode(xt,ne,XML_ELT,"td")
+    setattr(xt,n4,"valign","top")
+    output_text(desc,xt,n4,"div","CellBody",links)
+   end-if
+  end-do
+ end-if
+end-procedure
+
+!**************************************
+!* Update references and special tags
+!**************************************
+procedure update_tags(xt:xmldoc,n2:integer,links:array(LS:set of string) of text)
+ declarations
+  l:list of integer
+  f,fcp: text
+ end-declarations
+
+ getnodes(xt,n2,"//ref",l)
+ forall(hr in l) do
+  t:=string(getvalue(xt,hr))
+  if t<>"" then
+   setname(xt,hr,"a")
+   setattr(xt,hr,"href",links(t))
+   if t+"-title" in LS then
+    setvalue(xt,hr,links(t+"-title"))
+   end-if
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//entRef",l)
+ forall(hr in l) do
+  t:=string(getvalue(xt,hr))
+  if t<>"" then
+   setvalue(xt,getfirstchild(xt,hr),"")
+   setname(xt,hr,"span")
+   setattr(xt,hr,"class","Code")
+   n3:=addnode(xt,hr,XML_ELT,"a")
+   setattr(xt,n3,"href",links(t))
+   setvalue(xt,n3,t)
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//fctRef",l)
+ forall(hr in l) do
+  f:=getvalue(xt,hr)
+  if f<>"" then
+   setvalue(xt,getfirstchild(xt,hr),"")
+   setname(xt,hr,"span")
+   setattr(xt,hr,"class","Code")
+   n3:=addnode(xt,hr,XML_ELT,"a")
+   setattr(xt,n3,"href",f+".html")
+   setvalue(xt,n3,f)
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//eqref",l)
+ forall(hr in l) do
+  f:=getattr(xt,hr,"id")
+  if f<>"" then
+   setname(xt,hr,"span")
+   setvalue(xt,hr,'\eqref{'+f+'}')
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//mathj",l)
+ forall(hr in l) do
+  f:=getvalue(xt,hr)
+  if f<>"" then
+   setname(xt,hr,"span")
+   setvalue(xt,hr,' \( '+f+' \) ')
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//dispmathj",l)
+ forall(hr in l) do
+  f:=getvalue(xt,hr)
+  if f<>"" then
+   setname(xt,hr,"span")
+   fcp:=f
+   trim(fcp)
+   if not startswith(fcp, '\begin{') then
+     if testattr(xt,hr, 'id') then
+       setvalue(xt,hr, ' \begin{equation} '+f+ 
+         ' \label{'+ getattr(xt,hr, 'id') + '} \end{equation} ')
+     else
+       setvalue(xt,hr, ' \[ '+f+ ' \] ')
+     end-if
+   end-if 
+  end-if
+ end-do
+
+ getnodes(xt,n2,"//tt",l)
+ handle_tt(xt,l)
+
+ getnodes(xt,n2,"//fctInd",l)
+ handle_tt(xt,l)
+
+ getnodes(xt,n2,"//entInd",l)
+ handle_tt(xt,l)
+
+end-procedure
+
+!***********************************************
+!* Generate appropriate HTML code for tt font
+!***********************************************
+procedure handle_tt(xt:xmldoc,l:list of integer)
+ forall(hr in l) do
+  f:=getvalue(xt,hr)
+  if f<>"" then
+   setvalue(xt,getfirstchild(xt,hr),"")
+   setname(xt,hr,"span")
+   setattr(xt,hr,"class","Code")
+   setvalue(xt,hr,f)
+  end-if
+ end-do
+end-procedure
+
+!*************************************
+!* Generate a chapter topic overview
+!*************************************
+procedure genoverview(od:xmldoc,ond:integer,opg:text,nd:integer)
+ declarations
+  nlst,nlst2:list of integer
+ end-declarations
+ getnodes(xd,nd,"descendant::section",nlst)
+ if nlst.size>1 then
+  n2:=addnode(od,ond,XML_LASTCHILD,XML_ELT,"p",_("Topics covered in this chapter:"))
+  setattr(od,n2,"class","SectionListTitle")
+  n2:=addnode(od,ond,XML_LASTCHILD,XML_ELT,"div")
+  setattr(od,n2,"class","SectionOverview")
+  n2:=addnode(od,n2,XML_LASTCHILD,XML_ELT,"ul")
+  forall(i in nlst) do
+   n3:=addnode(od,n2,XML_LASTCHILD,XML_ELT,"li")
+   setattr(od,n3,"class","SectionOverview")
+   n4:=copynode(xd,getnode(xd,i,"title"),od,n3,XML_LASTCHILD)
+   setname(od,n4,"a")
+   setattr(od,n4,"href",opg+"#"+getattr(xd,i,"id"))
+   nlst2:=[]
+   getnodes(xd,i,"descendant::subsection",nlst2)
+   if nlst2.size>0 then
+    n4:=addnode(od,n3,XML_LASTCHILD,XML_ELT,"ul")
+    forall(j in nlst2) do
+     n5:=addnode(od,n4,XML_LASTCHILD,XML_ELT,"li")
+     setattr(od,n5,"class","SubSectionOverview")
+     n5:=copynode(xd,getnode(xd,j,"title"),od,n5,XML_LASTCHILD)
+     setname(od,n5,"a")
+     setattr(od,n5,"href",opg+"#"+getattr(xd,j,"id"))
+    end-do
+   end-if
+  end-do  
+  if getname(xd, getnode(xd,nd,"title/following::node()"))="p" then
+    n2:=addnode(od,n2,XML_NEXT,XML_ELT,"br")
+  end-if
+ end-if
+end-procedure
+
+!********************************
+!* Generate the chapters
+!********************************
+procedure enumchap(n:integer,hctx:s_hctx,links:array(string) of text)
+ declarations
+  prevfct:text
+  lfct,lent:list of integer
+ end-declarations
+ n:=getfirstchild(xd,n)
+ while(n>=0) do
+  case getname(xd,n) of
+   "chapter":
+	do
+	 if hctx.where>0 then
+          sethtmlfoot(hctx.xt,links)
+  	  setindentmode(hctx.xt,XML_MANUAL)
+ 	  save(hctx.xt,getnode(hctx.xt,0,"html"),hctx.bdir+"/"+hctx.chap)
+	 else
+	  hctx.chap:=""
+	 end-if
+	 reset(hctx.xt)
+	 n2:=sethtmlhead(hctx.xt,"",ifmathj)
+	 n2:=addnode(hctx.xt,n2,XML_NEXT,XML_ELT,"body")
+ 	 setvspace(hctx.xt,n2,1)
+	 hctx.nd:=addnode(hctx.xt,n2,XML_ELT,"blockquote")
+ 	 setvspace(hctx.xt,hctx.nd,1)
+	 n2:=addnode(hctx.xt,hctx.nd,XML_ELT,"div")
+	 setattr(hctx.xt,n2,"class","Navi")
+	 if hctx.chap<>"" then
+	  n3:=addnode(hctx.xt,n2,XML_TXT,"[")
+	  n3:=addnode(hctx.xt,n3,XML_NEXT,XML_ELT,"a")
+	  setattr(hctx.xt,n3,"href",hctx.chap)
+	  setvalue(hctx.xt,n3,"Previous chapter")
+	  n3:=addnode(hctx.xt,n3,XML_NEXT,XML_TXT,"]")
+	 end-if
+         n3:=getnext(xd,n)
+	 if n3>0 and getname(xd,n3)="chapter" then
+	  hctx.chap:=getattr(xd,n3,"id")+".html"
+	  n3:=addnode(hctx.xt,n2,XML_TXT,"[")
+	  n3:=addnode(hctx.xt,n3,XML_NEXT,XML_ELT,"a")
+	  setattr(hctx.xt,n3,"href",hctx.chap)
+	  setvalue(hctx.xt,n3,"Next chapter")
+	  n3:=addnode(hctx.xt,n3,XML_NEXT,XML_TXT,"]")
+	 end-if
+	 output_text(getnode(xd,n,"title"),hctx.xt,hctx.nd,"h1","Chapter",links)
+	 n2:=addnode(hctx.xt,hctx.nd,XML_ELT,"hr")
+	 setattr(hctx.xt,n2,"noshade","")
+	 setattr(hctx.xt,n2,"class","ChapterLine")
+	 n2:=addnode(hctx.xt,hctx.nd,XML_ELT,"br")
+	 
+	 hctx.chap:=getattr(xd,n,"id")+".html"
+	 hctx.where:=1
+         genoverview(hctx.xt,hctx.nd,hctx.chap,n)
+	 enumchap(n,hctx,links)
+	end-do
+   "section":
+	do
+	 n2:=addnode(hctx.xt,hctx.nd,XML_ELT,"a")
+	 setattr(hctx.xt,n2,"name",getattr(xd,n,"id"))
+	 setvalue(hctx.xt,n2," ")
+	 output_text_back(getnode(xd,n,"title"),hctx.xt,hctx.nd,"h2","Section",links)
+	 hctx.where:=2
+	 enumchap(n,hctx,links)
+	end-do
+   "subsection":
+	do
+	 n2:=addnode(hctx.xt,hctx.nd,XML_ELT,"a")
+	 setattr(hctx.xt,n2,"name",getattr(xd,n,"id"))
+	 setvalue(hctx.xt,n2," ")
+	 output_text_back(getnode(xd,n,"title"),hctx.xt,hctx.nd,"h3","SubSection",links)
+	 hctx.where:=3
+	 enumchap(n,hctx,links)
+	end-do
+   "entity":
+	do
+	 output_entity(n,hctx.xt,hctx.nd,links)
+	 hctx.where:=4
+	end-do
+   "fct":
+	do
+	 lfct+=[n]
+	 output_fct(hctx.bdir,n,prevfct,links)
+	 hctx.where:=4
+	end-do
+   "fctList":
+	if hctx.nd>0 then
+	 fctlist:=getlastchild(hctx.xt,hctx.nd)
+	end-if
+   "p":
+	do
+	 n2:=getfirstchild(xd,n)
+	 if n2>0 and getname(xd,n2)="entList" and getnext(xd,n2)<0 then
+	  reset(lent)
+	  getnodes(xd,n,"//entListItem",lent)
+	  lent:=sum(f in lent) [getnode(xd,"//entity[@name='"+getattr(xd,f,"name")+"']")]
+          output_entlist(lent,hctx.xt,getlastchild(hctx.xt,hctx.nd),links)
+	 elif n2>0 and getname(xd,n2)="fctList" and getnext(xd,n2)<0 then
+	  reset(lent)
+	  getnodes(xd,n,"//fctListItem",lent)
+	  lent:=sum(f in lent) [getnode(xd,"//fct[@name='"+getattr(xd,f,"name")+"']")]
+          output_fctlist(lent,hctx.xt,getlastchild(hctx.xt,hctx.nd),links)
+	 else
+	  output_text(n,hctx.xt,hctx.nd,"p","body",links)
+	 end-if
+	 hctx.where:=4
+	end-do
+   "pre":
+	do
+	 output_code(n,hctx.xt,hctx.nd,"pre","PreCode")
+	 hctx.where:=4
+	end-do
+  end-case
+  n:=getnext(xd,n)
+ end-do
+ if fctlist>0 and lfct.size>0 then
+  output_fctlist(lfct,hctx.xt,fctlist,links)
+ end-if
+
+end-procedure
+
+!*****************************
+!* Create the chapter files
+!*****************************
+procedure buildchaps(bdir:text,links:array(string) of text)
+ declarations
+  hctx:s_hctx
+ end-declarations
+ n:=getnode(xd,"mosel-doc")
+ if n<0 then
+  n:=getnode(xd,"manual")
+ end-if
+ hctx.bdir:=bdir
+ hctx.chap:=DEFCHAP
+ enumchap(n,hctx,links)
+ if hctx.where>0 then
+  sethtmlfoot(hctx.xt,links)
+  setindentmode(hctx.xt,XML_MANUAL)
+  save(hctx.xt,getnode(hctx.xt,0,"html"),bdir+"/"+hctx.chap)
+ end-if
+end-procedure
+
+end-model

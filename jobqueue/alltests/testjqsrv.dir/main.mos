@@ -1,0 +1,189 @@
+(!******************************************************
+   Jobqueue package testing
+   ========================
+
+   file mainjqsrv.mos
+   ``````````````````
+   Main file for testing jobqueue functionality
+   - Adding status message handling via an HTTP server -
+
+   author: B. Hafizoglu, May 2018, rev. S. Heipcke May 2023
+
+   (c) Copyright 2018-2023 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+
+model "Jobqueue Package Example"
+ options noimplicit;
+ version 0.0.3
+
+ uses "mmsystem", "mmjobs", "mmhttp"
+ uses "jobqueue"
+
+ parameters
+   NB=4
+ end-parameters
+
+ forward procedure startserver
+
+ public declarations
+   queue: integer
+   nd1,nd2,nd3,nd4: integer
+   job,job2: jq_job
+   jqi: jq_qinfo
+   rts, status, code: integer
+   tasks: list of integer
+   mpar: text
+   starttime, endtime: datetime
+ end-declarations
+
+ setparam("JQ_VERBOSE", 10)
+
+! **** 1. Initialize and configure queue(s) for task execution ****
+ queue:=queuenew
+
+ nd1:=queueaddnode(queue,"*",2)   ! Use same instance as current (no 'connect')
+ nd2:=queueaddnode(queue,"",2)    ! New instance (via rcmd) on current machine
+ nd3:=queueaddnode(queue,"localhost",2)  ! New instance via xprmsrv on current
+
+! nd4:=queueaddnode(queue,"remotenodename",2)   ! New instance (xprmsrv) on remote machine
+! nd5:=queueaddnode(queue,"rcmd:rsh remotenodename mosel -r")  ! New instance (rcmd) on remote machine
+
+
+! **** 2. Define job(s) = main model file + any other required files ****
+
+! if compile("simple2.mos")<>0 then exit(1);  end-if
+! jobinit(job,"simple2.bim")          ! Model is already compiled
+!!! NB: if the model is provided as BIM then the Mosel version on the remote
+!!! machine must be compatible (generally same or more recent) with the version
+!!! used for compiling the BIM
+
+ jobinit(job,"simple2.mos")
+
+ jobinit(job2,"simple2data.mos",2)  ! Model gets compiled by 'jobqueue', up to
+                                    ! 2 attempts at running model if server fail.
+ jobadd(job2,"simpledata.txt")      ! Add a data file for this model (multiple)
+ jobsetresult(job2,"results.txt")   ! Specify the result file (single file)
+
+! **** Starting an HTTP server to capture status messages while tasks execute
+ declarations
+   public msg,res:text
+   query: text
+   ht: integer
+   modSrv: Model            ! Attention: this entity must be global
+ end-declarations
+                            ! Build up a query, format:   server:port/service
+ query:= "http://localhost:2533/msg"
+ msg:="Test message"
+
+ ht:=httppost(query, "text:msg", "text:res")     ! Send as a POST query
+ if ht=999 then                     ! If server not found:
+   startserver                      ! Start the server
+                                    ! and resend the query
+   if httppost(query,"text:msg","null:") div 100 <>2 then   ! Test if request succeeded
+     writeln("Failed to send the query")
+   else
+     writeln("Message sent")
+   end-if
+ elif ht div 100<>2 then            ! Request failed with other error code
+   writeln("Failed to send the query")
+ else                               ! Request succeeded: Display query result
+   writeln("Message sent")
+ end-if
+
+! **** 3. Turn jobs into computation tasks by assigning them to a queue ****
+ writeln("**Total of ", NB+1, " models will be solved.")
+ forall(i in 1..NB) do
+   setmodpar(mpar, "WAIT_IN_SUBMODEL", i)
+   setmodpar(mpar, "IMPORTANT_PARAM", text("Hello World ") + (i^2))
+   tasks+=[queueaddjob(queue, job, mpar)]
+ end-do
+
+ ! Optional: Display the current status of a queue
+ queuegetinfo(queue,jqi)
+ writeln("**Queueinfo:",jqi)
+
+ tasks+=[queueaddjob(queue, job2)]
+
+ ! Optional: Display the current status of a queue
+ queuegetinfo(queue,jqi)
+ writeln("**Queueinfo:",jqi)
+
+
+! **** 4. Wait for termination ****
+ rts:=queuewait(queue)
+ writeln("**End of wait: ",rts)
+
+ declarations
+   Sol: dynamic array(range) of real
+   L: list of text
+   val: real
+ end-declarations
+
+ ! Optional: Display output and logs of the computation tasks
+ forall(t in tasks) do
+   initializations from taskstatfile(t)  ! Model execution status file
+     status code
+     starttime endtime
+   end-initializations
+   writeln("**Status of task ", t, ": ", status, "/", code)
+   writeln("**Host info task ", t, ":")
+   fcopy(taskhostfile(t),0,"",0)         ! Host (node) information file
+   if status=0 then
+     writeln("**Output of task ", t, " [executed in ", endtime-starttime, "s]:")
+     fcopy(taskoutfile(t),0,"",0)        ! Output log file
+   else
+     writeln("**Errors of task ", t, " [executed in ", endtime-starttime, "s]:")
+     fcopy(taskerrfile(t),0,"",0)        ! Error log file
+   end-if
+ end-do
+ with t=tasks.last do              ! The last task has a result output file
+   initializations from taskresfile(t)
+     Sol L val
+   end-initializations
+   writeln("**Result values: Sol=", Sol, " L=", L, " val=", val)
+   delcell(Sol)
+ end-do
+
+ ! Optional: Terminate job scheduler by deleting all queues
+ writeln("**Queue deleted: ", queuedel(queue))
+
+!*******************************************************
+  
+ procedure startserver
+   declarations
+     ev: Event
+     SUBMOD="jqhttpsrv.mos"         ! Server submodel file name
+   end-declarations
+
+   writeln("####Starting a new server on localhost")
+                                    ! Compile server submodel 
+   if compile("", SUBMOD, "tmp:bimfile")<>0: exit(2)
+   load(modSrv, "tmp:bimfile")      ! Load the bim file
+   fdelete("tmp:bimfile")                                   
+                                 ! Redirect streams (elsewhere than this model)
+!   setdefstream(modSrv,"null:", "null:", "sysfd:2")               
+   run(modSrv)                      ! Start model execution
+   wait
+   ev:=getnextevent
+   if ev.class=3 then
+     writeln("####Server started")
+   else
+     writeln("####Error starting server")
+   end-if
+
+ end-procedure
+
+end-model

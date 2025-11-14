@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+
+<!-- Document type definition for 'moseldoc' 
+     Copyright (c) 2015-2022 Fair Isaac Corporation. All rights reserved. -
+     Author: S. Heipcke, Feb. 2015 
+     Last revision: 3 February, 2022 -->
+
+
+<!-- ******************** Element groups ******************** -->
+
+<!ENTITY % specFormat "pre|ol|ul|dl|table|img|dispmathj">
+<!ENTITY % simpleFormat "b|i|tt|em|math|mathj|br|nbsp|fctRef|fctInd|entRef|entInd">
+<!ENTITY % tabFormat "caption|th|td|tr">
+<!ENTITY % plainText "#PCDATA">
+
+<!-- ******************** Contents models ******************** -->
+
+<!ENTITY % paraContent " #PCDATA | %simpleFormat; " >
+<!ENTITY % titleContent " #PCDATA | %simpleFormat; " >
+<!ENTITY % sectionContent " %specFormat; | p | a | index | fct | fctList | entity | entList" >
+<!ENTITY % simpleContent " #PCDATA | %simpleFormat; " >
+<!ENTITY % refContent " #PCDATA | fctRef | paramRef | errRef | entRef " >
+<!ENTITY % allContent " #PCDATA | %simpleFormat; | %specFormat;  " >
+<!ENTITY % fctSyntaxContent " fctSyntaxItem" >
+<!ENTITY % fctArgContent " %allContent; | fctArgText | fctArgVal | fctArgValPrivate" >
+<!ENTITY % fctReturnContent " %allContent; | fctReturnText | fctArg" >
+<!ENTITY % fctFurtherinfoContent " %allContent; | fctFurtherinfoItem | fctArgList" >
+<!ENTITY % entSyntaxContent " entSyntaxItem" >
+<!ENTITY % entNoteContent " %allContent; | entNoteItem" >
+
+<!-- ******************** Document hierarchy ******************** -->
+
+<!ELEMENT manual ( title, subtitle?, (section|chapter|part|%sectionContent;)* ) >
+<!ATTLIST manual id ID #REQUIRED
+                 title CDATA #REQUIRED
+                 date CDATA #REQUIRED
+                 author CDATA #IMPLIED
+                 release CDATA #IMPLIED
+		 creation (2015|2016|2021|2022) "2015">
+                 
+<!ELEMENT title ( %titleContent; )* >
+<!ATTLIST title cont CDATA #IMPLIED>
+<!ELEMENT subtitle ( %titleContent; )*>
+
+<!ELEMENT chapter ( title, (section|%sectionContent;)* ) >
+<!ATTLIST chapter title CDATA #REQUIRED
+                  id ID #REQUIRED >
+
+<!ELEMENT section ( title, (subsection|%sectionContent;)* ) >
+<!ATTLIST section id ID #REQUIRED >
+
+<!ELEMENT subsection ( title, (%sectionContent;)* ) >
+<!ATTLIST subsection id ID #IMPLIED>
+
+<!-- ******************** Block structures ******************** -->
+
+<!ELEMENT pre ANY>
+
+<!ELEMENT img ( (subtitle|p|%specFormat;)* )>
+<!ATTLIST img src CDATA #REQUIRED
+              title CDATA #IMPLIED
+              width CDATA #IMPLIED
+              height CDATA #IMPLIED
+	      scale CDATA #IMPLIED
+              id ID #IMPLIED>
+
+<!ELEMENT math (%allContent;)*>
+<!ELEMENT dispmathj (%mathContent;)* >
+<!ATTLIST dispmathj id ID #IMPLIED >
+<!ELEMENT mathj (%mathContent;)*>
+
+<!ELEMENT table ( (%tabFormat;|subtitle)* )>
+<!ATTLIST table id ID #IMPLIED
+                width CDATA #IMPLIED >
+<!ELEMENT caption (%titleContent;)* >
+<!ELEMENT tr (%tabFormat;)* >
+<!ELEMENT th (%allContent;)* >
+<!ATTLIST th colspan CDATA #IMPLIED
+             align (left|right|center|p) "center"
+             valign (top|middle|bottom) "top"
+             width CDATA #IMPLIED>
+<!ELEMENT td (%allContent;)* >
+<!ATTLIST td colspan CDATA #IMPLIED
+             align (left|right|center|p) "center"
+             valign (top|middle|bottom) "top"
+             width CDATA #IMPLIED>
+
+<!ELEMENT ol (li+)>
+<!ATTLIST ol type (A|a|I|i|1|nn) "nn"
+             start CDATA #IMPLIED>
+<!ELEMENT ul (li+)>
+<!ELEMENT li (%allContent;)* >
+<!ELEMENT dl ( (dt,dd)+ )>
+<!ATTLIST dl style (b|i|tt|nn) "tt" >
+<!ELEMENT dt (%allContent;)* >
+<!ELEMENT dd (%allContent;|p)* >
+
+<!ELEMENT p (%paraContent;|table)* >
+
+<!-- ******************** Text formating ******************** -->
+
+<!ELEMENT b (%allContent;)* >
+<!ELEMENT i (%allContent;)* >
+<!ELEMENT tt (%allContent;)* >
+<!ELEMENT em (%allContent;)* >
+<!ELEMENT br EMPTY>
+<!ELEMENT a (%allContent;)* >
+<!ATTLIST a href CDATA #REQUIRED
+            module CDATA #IMPLIED>
+<!ELEMENT nbsp EMPTY>
+
+<!-- ******************** Function documentation ******************** -->
+
+<!ELEMENT fct ( fctDescr?, fctDeprecated?, fctSyntax, fctArguments?, fctErrors?, fctControls?, fctReturn?, fctExample*, fctFurtherinfo?, fctRelated?, fctModule? )>
+<!ATTLIST fct name ID #REQUIRED
+              name2 CDATA #IMPLIED
+              name3 CDATA #IMPLIED
+              name4 CDATA #IMPLIED
+              deprecated (no|deprecated) "no"
+              descr CDATA #IMPLIED
+              module CDATA #IMPLIED>
+<!ELEMENT fctDeprecated (%paraContent;)* >
+<!ELEMENT fctDescr (%paraContent;)* >
+<!ELEMENT fctSyntax (%fctSyntaxContent;)* >
+<!ELEMENT fctSyntaxItem (%simpleContent;)* >
+<!ELEMENT fctArguments (fctArg)+>
+<!ATTLIST fctArguments width CDATA #IMPLIED >
+<!ELEMENT fctArgList (fctArg)+>
+<!ELEMENT fctArg (%fctArgContent;)*  >
+<!ATTLIST fctArg name CDATA #REQUIRED
+                 width CDATA #IMPLIED >
+<!ELEMENT fctArgText (%allContent;)* >
+<!ELEMENT fctArgVal (%allContent;)* >
+<!ATTLIST fctArgVal value CDATA #REQUIRED >
+<!ELEMENT fctArgValPrivate (%allContent;)* >
+<!ATTLIST fctArgValPrivate value CDATA #REQUIRED >
+<!ELEMENT fctErrors ( (fctErr)* )>
+<!ELEMENT fctErr (%allContent;)* >
+<!ATTLIST fctErr num CDATA #REQUIRED >
+<!ELEMENT fctControls ( (fctCtrl|fctCtrlDbl|fctCtrlInt|fctCtrlStr)+ )>
+<!ELEMENT fctCtrlDbl (fctCtrl)+ >
+<!ELEMENT fctCtrlInt (fctCtrl)+ >
+<!ELEMENT fctCtrlStr (fctCtrl)+ >
+<!ELEMENT fctCtrl (%allContent;)* >
+<!ATTLIST fctCtrl name CDATA #REQUIRED >
+<!ELEMENT fctReturn (%fctReturnContent;)* >
+<!ATTLIST fctReturn width CDATA #IMPLIED >
+<!ELEMENT fctReturnText (%allContent;)* >
+<!ELEMENT fctExample ( (fctExampleCode|fctExampleText)* )>
+<!ELEMENT fctExampleCode ANY>
+<!ELEMENT fctExampleText (%allContent;)*>
+<!ELEMENT fctFurtherinfo (%fctFurtherinfoContent;)* >
+<!ELEMENT fctFurtherinfoItem (%allContent;|fctArgList)*>
+<!ELEMENT fctRelated (%allContent;)* >
+<!ELEMENT fctModule (%simpleContent;)* >
+<!ELEMENT fctRef (%simpleContent;)*>
+<!ATTLIST fctRef module CDATA #IMPLIED >
+<!ELEMENT fctInd (%simpleContent;)*>
+<!ELEMENT fctList (fctListItem)* >
+<!ATTLIST fctList scope CDATA #IMPLIED
+                  scopeID IDREF #IMPLIED >
+<!ELEMENT fctListItem EMPTY >
+<!ATTLIST fctListItem name IDREF #REQUIRED >
+
+<!-- ******************** Model entity documentation ******************** -->
+
+<!ELEMENT entity ( entDescr, entDeprecated?, (entSyntax*|entType),, entDefault?, entConst?, entValues?,
+ entAffects?, entSetby?, entScope?, entPolicy?, entRelated?, entNote?, (entField)+ )>
+<!ATTLIST entity name ID #REQUIRED
+                 cat (param|ctrl|annot|constant|variable|type|fctreq) "variable"
+                 descr CDATA #IMPLIED
+                 deprecated (no|deprecated) "no"
+                 module CDATA #IMPLIED>
+<!ELEMENT entDeprecated (%paraContent;)* >
+<!ELEMENT entDescr (%simpleContent;)* >
+<!ELEMENT entSyntax (%entSyntaxContent;)* >
+<!ELEMENT entSyntaxItem (%simpleContent;)* >
+<!ELEMENT entType (%simpleContent;)* >
+<!ELEMENT entConst (%simpleContent;)*  >
+<!ELEMENT entValues (%allContent;|entVal|entValPrivate)* >
+<!ATTLIST entValues width CDATA #IMPLIED>
+<!ELEMENT entVal (%allContent;)*  >
+<!ATTLIST entVal value CDATA #REQUIRED >
+<!ELEMENT entValPrivate (%allContent;)*  >
+<!ATTLIST entValPrivate value CDATA #REQUIRED >
+<!ELEMENT entDefault (%simpleContent;)*>
+<!ELEMENT entScope (%simpleContent;)*>
+<!ELEMENT entPolicy (%simpleContent;)*>
+<!ELEMENT entAffects (%refContent;)* >
+<!ELEMENT entSetby (%refContent;)* >
+<!ELEMENT entRelated (%allContent;)* >
+<!ELEMENT entNote (%entNoteContent;)* >
+<!ELEMENT entNoteItem (%allContent;)*>
+<!ELEMENT entField ( entDescr, entType, entValues? )>
+<!ATTLIST entField name CDATA #REQUIRED >
+<!ELEMENT entRef (%simpleContent;)*>
+<!ATTLIST entRef module CDATA #IMPLIED >
+<!ELEMENT entInd (%simpleContent;)*>
+<!ELEMENT entList (entListItem)* >
+<!ATTLIST entList scope CDATA #IMPLIED
+                  scopeID IDREF #IMPLIED >
+<!ELEMENT entListItem EMPTY >
+<!ATTLIST entListItem name IDREF #REQUIRED >

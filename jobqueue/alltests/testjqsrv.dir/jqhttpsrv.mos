@@ -1,0 +1,75 @@
+(!******************************************************
+   Jobqueue package testing
+   ========================
+
+   file jqhttpsrv.mos
+   ``````````````````
+   Submodel started from mainjqsrv.mos
+   - Adding status message handling via an HTP server -
+
+   author: S. Heipcke May 2023
+
+   (c) Copyright 2023 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model "jq message server"
+ uses "mmsystem", "mmjobs", "mmhttp"
+
+ setparam("http_defport", 2533)          ! Set server port (2533)
+ setparam("http_srvconfig",HTTP_POST)    ! Only POST requests
+ setparam("workdir", getparam("tmpdir")) ! Move to temporary directory
+
+ httpstartsrv                            ! Start the server   
+ send(3,0)                               ! Message indicating server has started
+
+ writeln("####HTTP server started")
+
+ repeat
+   wait(120)                             ! Wait up to 2 min. for sth to happen
+   ev:=getnextevent                      ! Retrieve event
+
+   if ev.class=EVENT_HTTPNEW then        ! This must be an HTTP POST event
+     r:=integer(ev.value)
+     label:=httpreqlabel(r)              ! Accept only label 'msg'
+
+     if label<>"msg" then
+       httpreplycode(r, 400, "request must be labelled 'msg'")
+     elif httpreqstat(r)<>2 then         ! No data received with request
+       httpreplycode(r, 400, "requires message text")
+     else   
+       write("####"); fflush
+       fcopy(httpreqfile(r), "")         ! Simply display the message text
+       writeln
+       httpreply(r)                      ! Reply to HTTP POST query
+     end-if
+
+   else
+     break                               ! Terminate the server
+   end-if
+ until false
+
+end-model 
+
+
+
+HTTP error status codes
+=======================
+See:  https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
+
+1xx Informational
+2xx Success
+3xx Redirection
+4xx Client Error
+5xx Server Error

@@ -1,0 +1,72 @@
+(!******************************************************
+   Mosel Open Source components
+   ============================
+
+   file make.mos
+   `````````````
+   makefile for building the jobqueue package
+
+   author: Y.Colombani, Nov. 2025
+
+  (c) Copyright 2025 Fair Isaac Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+*******************************************************!)
+model make
+uses 'makeutil'
+
+parameters
+ BUILDDIR='build' ! destination directory
+ DOCDIR="Doc"     ! Doc directory
+ DOCSTYLE=getenv("DOCSTYLE")! path to xpressdoc/Styles (for building PDF/MD doc)
+ DOC_PDF=false    ! whether to build PDF (if available)
+ DEBUGDOC=false   ! if 'true', keep PDF/TXT directory when building doc
+ SAVELOGS=false   ! whether to save logs when testing
+ KEEPXML=false    ! whether to keep *_doc.xml file
+ BLDDOC='blddoc'  ! temporary directory for building doc
+end-parameters
+
+forward procedure buildpdf(src:string)
+forward procedure cleandoc(src:string)
+
+if TODO="doc" then
+ addenvpath("MOSEL_DSO",SYS_DOWN,BLDDOC)
+ setenv("JQDIR",BLDDOC+'/')
+ forall(m in ['jqcommon.mos','jqctrl.mos','jqsched.mos','jobqueue.mos'])
+  mos2bim(m,BLDDOC+'/')
+ runcmd("moseldoc","-f","-gd","Doc/Graphic","-o",DOCDIR+"/jobqueue",BLDDOC+"/jobqueue.bim")
+ if DOC_PDF and isdir(DOCSTYLE): buildpdf("jobqueue")
+ if KEEPXML: cp(BLDDOC+'/jobqueue_doc.xml',DOCDIR)
+ if not DEBUGDOC: cleandirs('-f',BLDDOC)
+elif TODO="test" then
+ runcmd("moseltest","LIBPATH="+BUILDDIR+"/dso","PIDFILE="+getparam("tmpdir")+"/srv.pid","SAVELOGS="+SAVELOGS)
+else
+  mos2bim('jqcommon.mos','')
+  mos2bim('jqctrl.mos','')
+  mos2bim(['jqsched.mos','jqcommon.bim','jqctrl.bim'],'')
+  mos2bim(['jobqueue.mos','Doc/jobqueue_doc.inc','jqcommon.bim','jqsched.bim'],BUILDDIR+'/dso/')
+  cleandoc('jobqueue')
+end-if
+
+procedure buildpdf(src:string)
+ runcmddir(BLDDOC,formattext('mosel %1$s/../makepdf.mos GRAPHICDIR="%4$s/Graphic" XMLSOURCEFILE="%2$s_doc.xml" PDFFILE="%3$s/%2$s.pdf"',DOCSTYLE,src,expandpath(DOCDIR),expandpath('Doc')))
+end-procedure
+
+procedure cleandoc(src:string)
+ cleandirs(DOCDIR+"/"+src)
+ cleanfiles(DOCDIR+"/"+src+".pdf",DOCDIR+"/"+src+"_md.zip",DOCDIR+"/"+src+"_doc.xml")
+ cleandirs(BLDDOC)
+end-procedure
+
+end-model

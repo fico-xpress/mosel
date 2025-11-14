@@ -1,0 +1,89 @@
+model "satisfaction"
+ uses "minisat"
+
+ parameters
+  N = 5                          ! Random value to demonstrate a loop
+ end-parameters
+
+ declarations
+   C : set of set of logical     ! This will be our set of clauses
+   x,y,z,a,b,c: logical          ! Individual logical/Boolean variables
+   ELEMS = 1..N                  ! Set serving as index for array of logicals
+   vars: array(ELEMS) of logical ! Array of N logicals
+ end-declarations
+
+!**** Subroutine to solve a problem + display solution status info ****
+ function solve_and_report(C: set of set of logical) :integer
+   writeln("Clauses:", C)        ! Display the set of clauses
+
+  ! Solve the SAT problem
+   returned := solve(C)
+
+  ! Report the result
+   if returned = 0 then
+     writeln("The problem is satisfiable")
+   elif returned = 1 then
+     writeln("The problem is unsatisfiable")
+   else
+     writeln("The problem has been interrupted")
+   end-if
+ end-function
+
+
+! Create individual sets of three clauses (of length 2 or 1) and 
+! two clauses of length three and join them
+ clauses_1 := {{x,y}, {y,z}, {not y}}
+ clauses_2 := {{a,b,c}, {not a,not b,not c}}
+ C := clauses_1+clauses_2
+
+! Small loop that puts each of the variables in the array together in a 
+! 2-clause with y, thereby forcing them to be TRUE (y must be FALSE, as of 
+! above) and adds all those two-clauses to our main set of clauses
+ forall(e in ELEMS)
+   C := C + {{vars(e),y}}
+
+! Solve the problem
+ status:=solve_and_report(C)
+ if (not(status=0)) then
+   writeln("ERROR!");
+ end-if
+
+! Display solution values
+ writeln( "x=", getsol(x), ", y=", getsol(y), ", z=", getsol(z) ) !x and z must be true, y must be false
+ writeln( "a=", getsol(a), ", b=", getsol(b), ", c=", getsol(c) ) !at least one false, at least one true
+
+
+ if( not(getsol(a) or getsol(b) or getsol(c)) or not(not(getsol(a)) or not(getsol(b)) or not(getsol(c))) ) then
+   writeln("ERROR!");
+ end-if
+
+ if (not(getsol(x)) or not(getsol(z)) or getsol(y)) then
+   writeln("ERROR!");
+ end-if
+
+ write("vars array: ")
+ forall(e in ELEMS) do
+   write(getsol(vars(e)), ", ")
+   if (not(getsol(vars(e)))) then
+     writeln("ERROR!");
+   end-if
+  end-do
+ writeln("")
+
+! Modify the problem and resolve it
+ C:= {{x,y},{y,z},{not y,x},{not y,not x},{not x,y}}
+ status := solve_and_report(C)
+
+ if (not(status=1)) then
+   writeln("ERROR!");
+ end-if
+
+! Delete all clauses and resolve
+ C:= {}
+ status := solve_and_report(C)
+
+ if (not(status=0)) then
+   writeln("ERROR!");
+ end-if
+
+end-model
